@@ -1,0 +1,1191 @@
+---
+title: "Section 2: Characterize the association between a set of iron-related predictors and baseline iron status for women who are postmenopausal at baseline."
+output:
+  pdf_document:
+    includes:
+      in_header: ../preamble-latex-nobookdown.tex
+    number_sections: yes
+    toc: no
+    highlight: tango
+  html_document:
+    theme: united
+    toc: no
+geometry: margin=1cm
+editor_options:
+  chunk_output_type: console
+---
+
+# Section 2, postmenopause # {#s2post}
+
+<!-- Source: U:\projects\Iron-nails-serum\sections\section6.Rmd  -->
+
+
+```{r , include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      results = 'markup',
+                      warning = F,
+                      message = F,
+                      error = F,
+                      fig.pos = 'H',
+                      results="hide")
+
+#runif(1, 0, 10^8)
+set.seed(74268794)
+
+```
+
+
+```{r, include=F}
+# bring in packages
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+library(dplyr)
+library(tidyr)
+library(plyr)
+library(expss) # https://cran.r-project.org/web/packages/expss/vignettes/labels-support.html
+# NOTE: expss seems to mask a a lot of functions from other packages listed here.
+library(cowplot)
+library(splines)
+library(sjlabelled)
+require(dplyr)
+
+```
+
+
+```{r}
+
+# source: section2-dataprep.Rmd
+
+load(file="../sections/s2.RData") # s2.dat, cov.vars.new, labels.df from section2-dataprep.Rmd
+
+names(s2.dat)
+cov.vars.new
+
+
+cov.vars.new = cov.vars.new[!(cov.vars.new %in% c("HR57.2"))]; cov.vars.new
+
+dim(s2.dat)
+s2.dat = s2.dat[s2.dat$menop.status==1,]
+dim(s2.dat)
+
+s2.dat$baseline.age = scale(s2.dat$baseline.age, scale=F)
+
+cov.vars.new = cov.vars.new[!(cov.vars.new %in% c("HR_Menopause.f"))]; cov.vars.new # remove menopause variable
+
+```
+
+```{r}
+labels.df$labels = gsub("at entry", "", as.character(labels.df$labels)) # remove 'at entry' from labels
+```
+
+
+
+```{r}
+
+# Get coefficients for ols for each of the 4 outcomes and each predictor
+
+# adapated from U:\projects\Iron-status\sections\section7.Rmd
+
+# make a function of the previous analyses repeating over covariates.
+names(s2.dat)
+
+
+get.coefs = function(cov,outcome) {
+
+#  tryCatch( 
+#    {
+        # dat=s2.dat; outcome = "Serum.iron"; cov='na_all_sd_ca_100' #  cov='HR_DiffLMPintv'; #cov="TQ75" # debug
+        # outcome = "Serum.iron"; cov='HZ_RX_NSAID_Aspirin_Current_Reg' # more debug
+        s2.dat$y= s2.dat[,outcome]
+        s2.dat$x = s2.dat[,cov]
+
+      # Linear regression model =========================
+      
+      if(outcome=="Serum.ferritin") {
+        fmla = paste( "scale(log(y))", '~ x + baseline.age + HR_DiffLMPintv')
+      } else {
+        fmla = paste( "scale(y)", '~ x + baseline.age + HR_DiffLMPintv')
+        }
+        
+      
+      if (cov %in% c('HR_DiffLMPintv','HR_DiffLMPintv_12')) {
+        model = lm(fmla, data=s2.dat[s2.dat$menop.status==1 & s2.dat$HR_DiffLMPintv>0,]) # restrict years since lmp to women who are postmenop at baseline
+      } else {
+        model = lm(fmla, data=s2.dat)
+      }
+      
+      c = coef(summary(model)); c
+      n = length(model$residuals); n
+      
+      
+      # put all info in data frame to export
+      df.info = data.frame(cov = paste(cov), 
+                           outcome = paste(outcome),
+                           coef = c,
+                           varname = rownames(c),
+                           n = n,
+                           stringsAsFactors=FALSE)
+      
+      df.info
+      return(df.info)
+# },
+#     error = function(e) return(NA))
+# 
+}
+
+get.coefs(cov="MC234.f", outcome="Serum.ferritin")
+get.coefs(cov='na_all_sd_ca_100', outcome="Serum.iron")
+get.coefs(cov='na_all_dt_ca_100', outcome="Serum.iron")
+
+get.coefs(cov='na_all_dt_fe_1000', outcome="Serum.iron")
+get.coefs(cov='totpreg.mo2', outcome="Serum.iron")
+
+get.coefs(cov='HZ_RX_NSAID_Aspirin_Current_Reg', outcome="Serum.iron")
+
+summary(s2.dat$Serum.iron)
+lm(Serum.iron ~ HZ_RX_NSAID_Aspirin_Current_Reg + baseline.age, data=s2.dat)
+
+```
+
+```{r}
+
+# what is the sample size for these analyses?
+# one sample analysis
+
+summary(s2.dat$na_all_dt_fe_1000)
+length(s2.dat[!(is.na(s2.dat$na_all_dt_fe_1000)), ]$na_all_dt_fe_1000)
+
+attributes(s2.dat$na_all_dt_fe_1000)
+
+table(s2.dat$menop.status)
+summary(lm(scale(Serum.iron) ~ na_all_dt_fe_1000 + baseline.age, data=s2.dat))
+
+```
+
+
+
+
+```{r}
+
+# Get LR chi-sq test to determine if spline a better fit for continuous variables
+
+get.lrt = function(cov,outcome) {
+  
+  # dat=s2.dat; outcome = "Serum.iron"; cov='HR_DiffLMPintv_12'; #cov="TQ75" # debug
+  # dat=s2.dat; outcome="Serum.iron"; cov="na_all_dt_fe" # debug
+  s2.dat$y = s2.dat[,outcome]
+  s2.dat$x = s2.dat[,cov]
+  
+
+# Linear regression model =========================
+  
+fmla0 = paste( "y", '~ x')
+fmla1 = paste( "y", '~ bs(x)')
+
+if (cov %in% c('HR_DiffLMPintv','HR_DiffLMPintv_12')) {
+  model0 = lm(fmla0, data=s2.dat[s2.dat$menop.status==1 & s2.dat$x>0,]) # restrict years since lmp to women who are postmenop at baseline
+  model1 = lm(fmla1, data=s2.dat[s2.dat$menop.status==1 & s2.dat$x>0,]) # restrict years since lmp to women who are postmenop at baseline
+} else {
+  model0 = lm(fmla0, data=s2.dat)
+  model1 = lm(fmla1, data=s2.dat)
+}
+
+df = data.frame(anova(model0,model1))
+
+# put all info in data frame to export
+df.info = data.frame(cov = paste(cov), 
+                     outcome = paste(outcome),
+                     df = df[2,3],
+                     SS = df[2,4],
+                     res.df = df[2,1],
+                     f.stat = df[2,5],
+                     p.f = df[2,6],
+                     stringsAsFactors=FALSE)
+
+df.info
+
+return(df.info)
+
+}
+
+#get.lrt(cov="HR_DiffLMPintv_12", outcome="Serum.iron")
+
+```
+
+
+
+
+```{r}
+
+# Get R2 for univariate models
+
+get.r2 = function(cov,outcome) {
+  
+  # dat=s2.dat; outcome = "Serum.iron"; cov='HR_DiffLMPintv_12'; #cov="TQ75" # debug
+  # dat=s2.dat; outcome="Serum.iron"; cov="na_all_dt_fe" # debug
+  s2.dat$y = s2.dat[,outcome]
+  s2.dat$x = s2.dat[,cov]
+  
+
+# Linear regression model =========================
+  
+fmla0 = paste( "y", '~ x + baseline.age + HR_DiffLMPintv')
+
+if (cov %in% c('HR_DiffLMPintv','HR_DiffLMPintv_12')) {
+  model0 = lm(fmla0, data=s2.dat[s2.dat$menop.status==1 & s2.dat$x>0,]) # restrict years since lmp to women who are postmenop at baseline
+} else {
+  model0 = lm(fmla0, data=s2.dat)
+}
+
+r2 = summary(model0)$r.squared; r2
+
+# put all info in data frame to export
+df.info = data.frame(cov = paste(cov), 
+                     outcome = paste(outcome),
+                     r2 = r2,
+                     stringsAsFactors=FALSE)
+
+df.info
+
+return(df.info)
+
+}
+
+get.r2(cov="na_all_dt_fe", outcome="Serum.iron")
+
+```
+
+```{r}
+
+s2.dat$log.serum.ferritin = log(s2.dat$Serum.ferritin)
+
+new.iron.vars = c("Serum.iron", "log.serum.ferritin", "Serum.fesat", "PC1"); new.iron.vars
+cov.vars.new
+
+summary(s2.dat[new.iron.vars])
+# get every combo of supp and iron vars
+
+dat.expand = expand.grid(cov.vars=cov.vars.new,
+                         iron.vars=new.iron.vars); dat.expand[11,]
+
+```
+
+```{r}
+
+unique(dat.expand$cov.vars) 
+
+summary(s2.dat[,c(names(table(dat.expand$cov.vars)))])
+
+# for some reason baseline.age was renamed to baseline.age.V1
+#s2.dat$baseline.age = s2.dat$baseline.age.V1
+
+get.coefs(cov='na_all_sd_ca_100', outcome="Serum.iron")
+
+mapply(get.coefs, cov="na_all_sd_ca_100", outcome="Serum.iron", SIMPLIFY=F)
+
+is.factor(s2.dat$na_all_dt_ca_100)
+
+# get linear coefficients
+run.models = mapply(get.coefs, 
+                    cov = as.character(dat.expand$cov.vars), 
+                    outcome = as.character(dat.expand$iron.vars),
+                    SIMPLIFY = F) # run all models for variables
+
+
+dat.models = run.models %>% bind_rows() # unlist models to get consolidated data frame
+
+dat.models
+dat.models[dat.models$varname=="x",]
+dat.models$varname = ifelse(dat.models$varname %in% c("x", "x1"), "x", dat.models$varname) # for some reason some vars are x and others are x2
+colnames(dat.models) = c("cov", "outcome", "estimate", "se", "t.stat", "p.value", "varname", "n")
+
+
+table(dat.models$cov)
+head(dat.models)
+dat.models
+
+```
+
+
+```{r}
+
+# get lrt to determine if spline a better fit for continuous variables
+
+cov.vars.new
+cov.vars.cont = c( 'bmi', "na_all_dt_fe", "FG_all_pf_meat_8", "na_all_sd_fe",
+                   "AL_DrinksPWC_4", "PH2_TotHrsPerWeek_4",  "na_all_dt_ca_100")
+cov.vars.cat = cov.vars.new[!(cov.vars.new %in% cov.vars.cont)]; cov.vars.cat
+
+summary(s2.dat[cov.vars.cont])
+
+dat.expand2 = expand.grid(cov.vars=cov.vars.cont,
+                         iron.vars=new.iron.vars); dat.expand2
+
+run.models2 = mapply(get.lrt, 
+                    cov=as.character(dat.expand2$cov.vars), 
+                    outcome=as.character(dat.expand2$iron.vars),
+                    SIMPLIFY = F) # run all models for variables
+
+run.models2
+
+dat.models2 = run.models2 %>% bind_rows() # unlist models to get consolidated data frame
+dat.models2
+
+models.nonlinear = dat.models2[dat.models2$p.f<0.05, c("cov", "outcome")] # models with spline that has better fit
+models.nonlinear
+
+names(models.nonlinear)[which(names(models.nonlinear) %in% c("cov"))] = c("varname")
+models.nonlinear = merge(models.nonlinear, labels.df, by=c("varname"))
+
+models.nonlinear
+
+```
+
+
+
+```{r}
+
+# get R2 for all variables
+cov.vars.new
+
+dat.expand3 = expand.grid(cov.vars=cov.vars.new,
+                         iron.vars=new.iron.vars[!(new.iron.vars %in% c("PC1"))]); dat.expand3
+
+run.models3 = mapply(get.r2, 
+                    cov=as.character(dat.expand3$cov.vars), 
+                    outcome=as.character(dat.expand3$iron.vars),
+                    SIMPLIFY = F) # run all models for variables
+
+run.models3
+
+dat.models3 = run.models3 %>% bind_rows() # unlist models to get consolidated data frame
+dat.models3[order(dat.models3$r2),]
+
+
+# show results from one model to confirm r2
+sum.bmi.fesat = summary(lm(scale(Serum.fesat) ~ bmi + baseline.age, data=s2.dat))
+sum.bmi.fesat
+sum.bmi.fesat$r.squared
+
+
+# confirm predictor model r2
+fmla.fesat <- as.formula(paste("Serum.fesat ~ ", 
+                               paste0( c(cov.vars.new, "scale(baseline.age, scale=F)"),
+                                       collapse = " + ")))
+summary(lm(fmla.fesat, data=s2.dat))$r.squared
+
+
+fmla.fertn <- as.formula(paste("scale(log(Serum.ferritin)) ~ ", 
+                               paste0( c(cov.vars.new, "scale(baseline.age, scale=F)"),
+                                       collapse = " + ")))
+summary(lm(fmla.fertn, data=s2.dat))$r.squared
+
+
+
+```
+
+
+```{r}
+# plot nonlinear variables
+
+head(s2.dat)
+class(s2.dat)
+
+# Make long style data frame 
+names(s2.dat)
+class(as_factor(s2.dat$MC234.f))
+class(s2.dat$HR_DiffLMPintv_12)
+
+head(s2.dat)
+#c(as.numeric(cov.vars.cont)
+# as.numeric(as_factor(cov.vars.cont)),
+
+sapply(s2.dat[cov.vars.cont], class)
+s2.dat[cov.vars.cont] = apply(s2.dat[cov.vars.cont], 2, function(x) {as.numeric(as_factor(x))})
+sapply(s2.dat[cov.vars.cont], class)
+
+s2.long.cont <- 
+  s2.dat %>% 
+  dplyr::select(c( cov.vars.cont, new.iron.vars, 'PSID')) %>% 
+  pivot_longer(cols = -c("PSID", new.iron.vars),
+               values_drop_na=T)
+
+#head(s2.long.cont)
+
+names(s2.long.cont)[which(names(s2.long.cont) %in% c("name"))] = c("varname")
+s2.long.cont = merge(s2.long.cont, labels.df, by=c("varname"))
+#head(s2.long.cont)
+```
+
+
+\blandscape
+
+## Plots of predictors with spline as best fit.
+
+```{r, fig.height=8, fig.width=10}
+
+# Plot of nonlinear serum iron variables
+ggplot(data=s2.long.cont[s2.long.cont$varname %in% unique(models.nonlinear[models.nonlinear$outcome %in% c("Serum.iron"),]$varname),],
+       aes(x=value, y=Serum.iron)) +
+  geom_smooth() +
+  geom_smooth(method = lm, se = FALSE, color="red") +
+  theme_bw() +
+  facet_wrap(labels~., scales = "free") +
+  labs(title="Serum iron outcome")
+
+```
+
+
+```{r, fig.height=8, fig.width=10}
+
+
+# Plot of nonlinear serum ferritin variables
+ggplot(data=s2.long.cont[s2.long.cont$varname %in% unique(models.nonlinear[models.nonlinear$outcome %in% c("log.serum.ferritin"),]$varname),],
+       aes(x=value, y=log.serum.ferritin)) +
+  geom_smooth() +
+  geom_smooth(method = lm, se = FALSE, color="red") +
+  theme_bw() +
+  facet_wrap(labels~., scales = "free") +
+  labs(title="log serum ferritin outcome")
+
+# Plot of nonlinear serum iron transferrin saturation
+# ggplot(data=s2.long.cont[s2.long.cont$varname %in% unique(models.nonlinear[models.nonlinear$outcome %in% c("Serum.fesat"),]$varname),],
+#        aes(x=value, y=Serum.fesat)) +
+#   geom_smooth() +
+#   geom_smooth(method = lm, se = FALSE, color="red") +
+#   theme_bw() +
+#   facet_wrap(labels~., scales = "free") +
+#   labs(title="Serum transferrin iron saturation")
+
+# Plot of nonlinear PC1
+# ggplot(data=s2.long.cont[s2.long.cont$varname %in% unique(models.nonlinear[models.nonlinear$outcome %in% c("PC1"),]$varname),],
+#        aes(x=value, y=PC1)) +
+#   geom_smooth() +
+#   geom_smooth(method = lm, se = FALSE, color="red") +
+#   theme_bw() +
+#   facet_wrap(labels~., scales = "free") +
+#   labs(title="Serum iron transferrin saturation")
+
+
+```
+
+\elandscape
+
+```{r}
+
+# print off regression models
+#dat.models$varname=="x"
+
+head(dat.models)
+head(dat.models2)
+
+
+rev.dat = dat.models[,!(names(dat.models) %in% c( "t.stat"))] %>%
+  pivot_wider(names_from = c(varname), values_from = c( "estimate", "se", "p.value",  "n"))
+rev.dat
+table(rev.dat$cov)
+
+rev.dat = rev.dat %>% unnest(cols = names(rev.dat))
+sapply(rev.dat, class)
+
+# fix diff se across variables if MC234 remains labelled.
+#rev.dat$se_x. = ifelse(!(is.na(rev.dat$se_x)), rev.dat$se_x, rev.dat$`se_x1) Yes`)
+#rev.dat$se_x = rev.dat$se_x.
+
+# Merge categories and labels with variables
+dat.models2$test = with(dat.models2, paste0(round(f.stat,2), ", df=", res.df, ", p-value=", round(p.f,2)))
+head(dat.models2)
+
+#head(labels.df)
+rev.dat2 = merge(rev.dat, labels.df, by.x="cov", by.y="varname")
+rev.dat2 = merge(rev.dat2, dat.models2[c("cov", "outcome", "test")], by=c("cov", "outcome"), all.x=T)
+head(rev.dat2)
+
+#table(rev.dat2$cov)
+
+# replace brackets with blanks (does not work in report)
+# source: https://stackoverflow.com/questions/7195805/remove-square-brackets-from-a-string-vector
+
+# rev.dat2$labels <- gsub("\\[", "{{[}}", rev.dat2$labels)
+# rev.dat2$labels <- gsub("\\]", "{{]}}", rev.dat2$labels)
+# rev.dat2$labels <- gsub("\\_", "{\\_}", rev.dat2$labels)
+
+#rev.dat2$labels <- gsub("\\[", "", rev.dat2$labels)
+#rev.dat2$labels <- gsub("\\]", "", rev.dat2$labels)
+rev.dat2$labels <- gsub("\\_", ".", rev.dat2$labels)
+#rev.dat2$labels <- gsub("/", "", rev.dat2$labels)
+#rev.dat2$labels <- gsub(":", "", rev.dat2$labels)
+rev.dat2$cov = gsub("\\_", ".", rev.dat2$cov)
+rev.dat2$labels <- gsub("#", "no.", rev.dat2$labels)
+head(rev.dat2,20)
+
+class(rev.dat2)
+class(rev.dat2$estimate_x)
+
+# make est + 95% ci for (use in abstract)
+rev.dat2$est.ci = with(rev.dat2, paste0(round(estimate_x,3), ", (", 
+                                        round(estimate_x - 1.96*se_x, 3), ", ",
+                                        round(estimate_x + 1.96*se_x, 3), ")"))
+
+head(rev.dat2)
+tail(rev.dat2)
+
+table(rev.dat2$cov)
+
+
+```
+
+\blandscape
+
+```{r, results="markup"}
+
+# DH	dh_vm_fq_itm16	DH: VIT/MIN Freq iron
+# DH	dh_vm_du_itm16	DH: VIT/MIN Iron, duration
+# DH	dh_vm_yn_itm16	DH: VIT/MIN [CALC] Iron, y/n
+# DH	dh_vm_yn4_itm16	DH: VIT/MIN [CALC] Iron 4+/wk, y/n
+# names(rev.dat2)
+
+rev.dat3 = rev.dat2[, which( names(rev.dat2) %in% c("category",  "labels",  "outcome", 
+                                                    "estimate_(Intercept)",  "estimate_x",
+                                                    "se_(Intercept)", "se_x",
+                                                    "p.value_(Intercept)", "p.value_x",
+                                                    "n_x", "test") )]
+#head(rev.dat3)
+# head(rev.dat2)
+#table(rev.dat3$cov)
+rev.dat3 = rev.dat3[order(rev.dat3$category, rev.dat3$labels, rev.dat3$outcome),
+                     c("category",  "labels",  "outcome", 
+                                                    "estimate_(Intercept)",  "estimate_x",
+                                                    "se_(Intercept)", "se_x",
+                                                    "p.value_(Intercept)", "p.value_x",
+                                                    "n_x", "test")]
+#head(rev.dat3)
+
+kable(rev.dat3, booktabs=T, 
+      col.names = c("Category", "Variable label", "Variable", rep(c("Intercept", "Coefficient"),3), "n", "F test$^b$"),
+      escape=F,
+      row.names=F,
+      #longtable=T,
+      caption="Regression model parameters for difference in iron measures for various predictors (referent for binary variables=no)") %>%
+      #longtable=T) %>%  #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  add_header_above(c("Covariate"=2, "Outcome variable" = 1, 
+                     "Estimate" = 2, "SE" = 2, "p-value" = 2, " " = 2)) %>%
+  kable_styling(latex_options = c("striped", "scale_down")) %>%
+  column_spec(1:2, width = "15em") %>%
+  collapse_rows(columns =1:2) %>%
+  footnote(general = "Each row represents a separate regression model.",
+           alphabet = c("Years since LMP restricted to women who were postmenopausal at baseline.",
+                        "F-test comparing linear to spline model"),
+           threeparttable=T) # source: https://rdrr.io/cran/kableExtra/man/footnote.html
+
+
+```
+
+\elandscape
+
+```{r, results="markup"}
+
+rev.dat4 = rev.dat2[, which( names(rev.dat2) %in% c( "labels", "category", "est.ci", "outcome") )]
+rev.dat4
+
+#head(rev.dat4)
+rev.dat4 = rev.dat4[order(rev.dat4$category, rev.dat4$labels, rev.dat4$outcome), c( "category", "labels", "outcome", "est.ci")]
+# head(rev.dat4)
+
+kable(rev.dat4, booktabs=T, 
+      col.names = c("Category", "Variable label", "Outcome", "Estimate (95\\% CI)"),
+      escape=F,
+      row.names=F,
+      longtable=T,
+      caption="Regression model parameters for various predictors") %>%
+      #longtable=T) %>%  #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  kable_styling(latex_options = c("striped")) %>%
+  column_spec(1:2, width = "15em") %>%
+  collapse_rows(columns =1:2) %>%
+  footnote(general = "Each row represents a separate regression model.",
+           threeparttable=T) # source: https://rdrr.io/cran/kableExtra/man/footnote.html
+
+```
+
+
+
+
+```{r, results="markup", eval=F, include=F}
+
+kable(rev.dat3[rev.dat3$outcome %in% c("Serum.ferritin", "PC1"),], booktabs=T, 
+      col.names = c("Category", "Variable label", "Variable"," ", rep(c("Intercept", "Coefficient"),3), ""),
+      escape=F,
+      row.names=F,
+      #longtable=T,
+      caption="Regression model parameters for difference in iron measures for various predictors (referent=no)") %>%
+      #longtable=T) %>%  #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  landscape() %>%
+  add_header_above(c("Covariate"=3, "Outcome variable" = 1, 
+                     "Estimate" = 2, "SE" = 2, "p-value" = 2, "n" = 1)) %>%
+  kable_styling(latex_options = c("striped", "scale_down")) %>%
+  column_spec(1:2, width = "20em") %>%
+  collapse_rows(columns =1:2) %>%
+  footnote(general = "Each row represents a separate regression model.",
+           alphabet = "Years since LMP restricted to women who were postmenopausal at baseline.",
+           threeparttable=T) # source: https://rdrr.io/cran/kableExtra/man/footnote.html
+
+
+# to print in latex must escape underscore and pound sign characters to work
+```
+
+\blandscape
+
+```{r, fig.width=12, fig.height=7}
+
+# plot
+#head(rev.dat3)
+
+#pcdat = rev.dat3[rev.dat3$outcome=="PC1",]
+#levels(factor(rev.dat3$labels))
+
+# these variables have to be on the list from cov.vars object in section2-dataprep.Rmd
+
+#unique(rev.dat3[c("cov", "labels")])
+numeric.covs = c("AL.DrinksPWC.4",
+                 "PH2.TotHrsPerWeek.4",
+                 "na.all.dt.ca.100",
+                 "FG.all.pf.meat.8",
+                 "FG.all.pf.meat",
+                 "na.all.dt.fe",
+                 "na.all.sd.fe",
+                 "na.all.dt.fe.1000",
+                 "na.all.sd.fe.1000",
+                 "HR.DiffLMPintv",
+                 "HR.HRT.Years",
+#                 "HR.DiffLMPintv.12",
+#                 "HR.HRT.Years.12",
+                 "na.sup.ca.100",
+                  "na.all.sd.ca.100",
+                 'na.all.dt.ca.100',
+                 'bmi',
+                 'rls', 
+                 'totpreg.mo2',
+                 'na.sup.fe.1000',
+                'na.sup.fe')
+
+supp.covs = c("na.all.dt.fe",
+              "na.sup.fe",
+              "na.all.sd.fe",
+              "na.all.dt.ca.100",
+              'na.sup.ca.100',
+              'na.all.sd.ca.100') # NOTE: ca in mg does not scale with the iron values in mg. put separately and keep mg?
+
+
+hr.covs = c(      "HR.DiffLMPintv",
+                 "HR.HRT.Years")
+            
+
+lifestyle.covs = c("AL.DrinksPWC.4",
+                 "PH2.TotHrsPerWeek.4",
+                 "FG.all.pf.meat.8",
+                 'bmi', 
+                 'rls')
+
+
+
+covs.all = unique(rev.dat3$cov); covs.all
+cat.vars = covs.all[!(covs.all %in% numeric.covs)]; cat.vars
+
+table(rev.dat2$cov)
+```
+
+## Plots of parameters for ordinary least squares regression for association between iron predictors and serum iron outcomes
+
+```{r, fig.width=11, fig.height=8}
+
+rev.dat2$outcome.f = factor(rev.dat2$outcome,
+                           labels = c("ln(Ferritin (mcg/dL))",
+                                      "PC1", 
+                                      "Transferrin\n Saturation (%)", 
+                                      "Iron (mcg/dL)"))
+
+# Note: some supplement variables have such wide CI that re-scaling them doesn't help.
+supp.plot = ggplot(data=rev.dat2[rev.dat2$cov %in% supp.covs,], aes(x=estimate_x, y=labels)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.1) +
+  geom_point() +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw() +
+  facet_grid(.~outcome, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="Parameter estimate", y="Iron predictor", 
+       title="Regression model parameters for difference in iron measures for supplement predictors")
+
+supp.plot
+
+
+```
+
+
+```{r}
+
+# figure for for ser 2021 poster
+dat.supp = rev.dat2[rev.dat2$cov %in% supp.covs,]
+
+table(dat.supp$labels)
+
+# dat.supp$labels.mod = with(dat.supp, ifelse(labels=="Dietary + supplement calcium, dg", "Dietary +\n supplement calcium, dg", 
+#                                           ifelse(labels=="Dietary and supplement iron, mg", "Dietary +\n supplement iron, mg",labels)))
+# table(dat.supp$labels.mod)
+
+dat.supp$labels.mod = dat.supp$labels
+
+table(dat.supp$labels.mod)
+
+# re-order supplements and dietary intake
+levels(factor(dat.supp$labels.mod))
+
+dat.supp$labels.mod = factor(dat.supp$labels.mod,
+                             levels = c("Dietary + supplement calcium, dg",
+                                        "Dietary calcium, dg",
+                                        "Calcium supplements, dg",
+                                        "Dietary + supplement iron, mg",
+                                        "Dietary iron, mg",
+                                        "Iron supplements, mg"))
+
+# Note: some supplement variables have such wide CI that re-scaling them doesn't help.
+supp.plot.mod = ggplot(data=dat.supp[!(dat.supp$outcome.f %in% c("PC1")),], 
+                    aes(x=estimate_x, y=labels.mod)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.3, size=1) +
+  geom_point(size=4) +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw(base_size=20) +
+  facet_grid(.~outcome.f, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="Parameter estimate", y="", 
+       title="Supplements")
+
+supp.plot.mod
+
+```
+
+
+```{r}
+
+ggsave("supp-vars-poster.png", units="in", width=14, height=4, dpi=400) #units="in", width=5, height=4, dpi=300,
+
+```
+
+
+```{r, fig.width=11, fig.height=8}
+
+# Note: some supplement variables have such wide CI that re-scaling them doesn't help.
+hr.plot = ggplot(data=rev.dat2[rev.dat2$cov %in% c(hr.covs, lifestyle.covs, 'totpreg.mo2'),], 
+                 aes(x=estimate_x, y=labels)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.1) +
+  geom_point() +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw() +
+  facet_grid(.~outcome, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="Parameter estimate", y="Iron predictor", 
+       title="Regression model parameters for difference in iron measures for lifestyle predictors")
+
+hr.plot
+
+```
+
+
+
+```{r}
+# figure for for ser 2021 poster
+dat.life = rev.dat2[rev.dat2$cov %in% c(hr.covs, lifestyle.covs),]
+table(dat.life$labels)
+
+dat.life$labels.mod = with(dat.life, ifelse(labels=="Estrogen or progesterone use (months)", 
+                                            "Estrogen or progesterone\n use (months)",
+                                            ifelse(labels=="Months since LMP at interview", "Months since \nLMP at interview", 
+                                                   ifelse(labels=="Reproductive life span (years)", "Reproductive life \nspan (years)", labels))))
+
+# Note: some supplement variables have such wide CI that re-scaling them doesn't help.
+life.plot.mod = ggplot(data=dat.life[!(dat.life$outcome.f=="PC1"),], 
+                    aes(x=estimate_x, y=labels.mod)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.3, size=1) +
+  geom_point(size=4) +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw(base_size=20) +
+  facet_grid(.~outcome.f, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="Parameter estimate", y="", 
+       title="Lifestyle")
+
+life.plot.mod
+
+```
+
+
+```{r}
+
+ggsave("life-vars-poster.png", units="in", width=14, height=5, dpi=400) #units="in", width=5, height=4, dpi=300,
+
+```
+
+```{r, fig.width=11, fig.height=8}
+
+# Note: some supplement variables have such wide CI that re-scaling them doesn't help.
+cat.plot = ggplot(data=rev.dat2[!(rev.dat2$cov %in% numeric.covs),], 
+                  aes(x=estimate_x, y=labels)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.1) +
+  geom_point() +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw() +
+  facet_grid(.~outcome, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="Parameter estimate", y="Iron predictor", 
+       title="Regression model parameters for difference in iron measures for binary predictors\n (referent for binary variables=no)")
+
+cat.plot
+
+```
+
+
+```{r}
+# figure for for ser 2021 poster
+dat.cat = rev.dat2[!(rev.dat2$cov %in% numeric.covs),]
+names(table(dat.cat$outcome))
+levels(factor(dat.cat$outcome))
+
+
+table(dat.cat$labels)
+dat.cat$labels.mod = with(dat.cat, ifelse(labels=="Currently use aspirin regularly (1+/wk, 3+ mos)", "Currently use aspirin\n regularly (1+/wk, 3+ mos)", labels))
+table(dat.cat$labels.mod)
+
+
+# Note: some supplement variables have such wide CI that re-scaling them doesn't help.
+cat.plot.mod = ggplot(data=dat.cat[!(dat.cat$outcome.f=="PC1"),], 
+                    aes(x=estimate_x, y=labels.mod)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.3, size=1) +
+  geom_point(size=4) +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw(base_size=20) +
+  facet_grid(.~outcome.f, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="Parameter estimate", y="", 
+       title="Binary predictors")
+
+cat.plot.mod
+
+```
+
+
+```{r}
+
+ggsave("cat-vars-poster.png", units="in", width=14, height=5, dpi=400) #units="in", width=5, height=4, dpi=300,
+
+```
+
+
+```{r, fig.width=11, fig.height=8}
+plot_grid(supp.plot.mod, NULL, life.plot.mod, NULL, cat.plot.mod, 
+          rel_heights = c(0.25,-0.025, 0.35, -0.025, 0.35),
+          #labels=c("Supplements", "Lifestyle", "Binary"),
+          ncol=1,
+          align="v")
+```
+
+
+```{r}
+
+ggsave("all-vars-poster.png", units="in", width=15, height=14, dpi=400) #units="in", width=5, height=4, dpi=300,
+
+```
+
+![Prediction models](all-vars-poster.png)
+
+
+```{r, fig.width=11, fig.height=8}
+plot_grid(supp.plot, hr.plot, cat.plot, 
+          labels=c("Supplements", "Lifestyle", "Binary"),
+          ncol=1,
+          align="v")
+```
+
+
+\elandscape
+
+
+<!-- Make updated figures for manuscript after adding new set of variables after 9/2021. -->
+<!-- ============================================================= -->
+
+```{r}
+
+# Group 1. supplements and dietary intake
+supp.plot.mod2 = supp.plot.mod + 
+  labs(x="",
+       title="Supplements and dietary intake")
+supp.plot.mod2
+
+
+```
+
+
+```{r}
+
+# Group 2. Lifestyle: exercise, BMI, meat consumption, alcohol consumption
+
+
+lifestyle.covs2 = c("AL.DrinksPWC.4",
+                 "PH2.TotHrsPerWeek.4",
+                 "FG.all.pf.meat.8",
+                 'bmi')
+
+dat.life2 = rev.dat2[rev.dat2$cov %in% c(lifestyle.covs2),]
+table(dat.life2$labels)
+
+# Note: some supplement variables have such wide CI that re-scaling them doesn't help.
+life.plot.mod2 = ggplot(data=dat.life2[!(dat.life2$outcome.f=="PC1"),], 
+                    aes(x=estimate_x, y=labels)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.3, size=1) +
+  geom_point(size=4) +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw(base_size=20) +
+  facet_grid(.~outcome.f, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="", 
+       y="", 
+       title="Lifestyle") +
+  theme(strip.text = element_blank())
+
+life.plot.mod2
+
+```
+
+
+```{r}
+# Group 3: years since last menstrual period, reproductive life span (years) that is calculated by subtracting age at menarche from age at menopause based on last menstrual period, estrogen or progesterone use (number of total years), and total years pregnant and breastfeeding
+
+
+dat.repro = rev.dat2[rev.dat2$cov %in% c(hr.covs, 
+                                         'totpreg.mo2',
+                                         'rls'),]
+table(dat.repro$labels)
+
+repro.plot.mod = ggplot(data=dat.repro[!(dat.repro$outcome.f=="PC1"),], 
+                    aes(x=estimate_x, y=labels)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.3, size=1) +
+  geom_point(size=4) +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw(base_size=20) +
+  facet_grid(.~outcome.f, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="", 
+       y="", 
+       title="Reproductive Health") +
+  theme(strip.text = element_blank())
+
+repro.plot.mod
+
+```
+
+                                          
+```{r}
+
+# Group 4: self-report of ever having a health condition at baseline were: preeclampsia, polycystic ovary syndrome (PCOS), irritable bowel syndrome (IBS), colon/rectum polyps, and iron-deficiency anemia (IDA)
+
+dat.health = rev.dat2[rev.dat2$cov %in% c('pcos.rev', 
+                                          'preeclampsia',
+                                          'ibd.rev',
+                                          'polyps.rev',
+                                          'MC116.f'),]
+table(dat.health$labels)
+levels(factor(dat.health$labels))
+
+dat.health$labels2 = factor(dat.health$labels, 
+                            labels = c("Dx with IDA",
+                                       "Colon/rectum polyps",
+                                       "Irritable bowel disease",
+                                       "PCOS",
+                                       "Preeclampsia"))
+
+
+
+health.plot.mod = ggplot(data=dat.health[!(dat.health$outcome.f=="PC1"),], 
+                    aes(x=estimate_x, y=labels2)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.3, size=1) +
+  geom_point(size=4) +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw(base_size=20) +
+  facet_grid(.~outcome.f, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="", 
+       y="", 
+       title="Health conditions (ever)") +
+  theme(strip.text = element_blank())
+
+health.plot.mod
+
+```
+
+```{r}
+
+# Group 5: : statin use, regular aspirin use (1+/week for 3 or more months), hormone replacement therapy (HRT), and recent blood donation (within past 12 months). We also included three genetic variants that have been confirmed to be associated with serum iron (rs1800562 (HFE gene), rs1799945 (HFE gene), and rs855791 (TMPRSS6 gene))
+
+# Checking results for blood donation in past 12 months
+#model = lm(scale(log.serum.ferritin) ~ blood.don.12mos + baseline.age, 
+#           data=s2.dat)
+
+bin.vars = c('HZ.RX.Chol.Statin.Current',
+             'HZ.RX.NSAID.Aspirin.Current.Reg',
+             'blood.don.12mos',
+             'rs1799945.g',
+             'rs1800562.a',
+             'rs855791.g')
+                
+table(rev.dat2$cov)
+dat.cat2 = rev.dat2[rev.dat2$cov %in% bin.vars,]
+table(dat.cat2$labels)
+
+dat.cat2$labels = with(dat.cat2, 
+                       ifelse(labels=="Currently use aspirin regularly (1+/wk, 3+ mos)", 
+                              "Currently use aspirin\n regularly (1+/wk, 3+ mos)",
+                              labels))
+table(dat.cat$labels)
+
+cat.plot.mod2 = ggplot(data=dat.cat2[!(dat.cat2$outcome.f=="PC1") & !(dat.cat2$labels %in% c("rs1799945, G allele",
+                                                                                             "rs1800562, A allele",
+                                                                                             "rs855791, G allele")),], 
+                    aes(x=estimate_x, y=labels)) + 
+  geom_errorbar(aes(xmin=estimate_x-1.96*se_x, xmax=estimate_x+1.96*se_x), colour="black", width=.3, size=1) +
+  geom_point(size=4) +
+  geom_vline(xintercept=0, lty=3, size=1) +
+  theme_bw(base_size=20) +
+  facet_grid(.~outcome.f, scales="free") +
+#  theme(axis.text.y = element_text(angle = 15, vjust = 0.5, hjust=1))
+  labs(x="Parameter estimate", y="", 
+       title="Binary predictors") +
+  theme(strip.text = element_blank())
+
+cat.plot.mod2
+
+```
+
+
+```{r, fig.width=8, fig.height=10}
+
+plot_grid(supp.plot.mod2, NULL, 
+          life.plot.mod2, NULL, 
+          repro.plot.mod, NULL,
+          health.plot.mod, NULL,
+          cat.plot.mod2,
+          rel_heights = c(0.20,-0.02, 0.16, -0.02, 0.16, -0.02, 0.18, -0.02, 0.20),
+          #labels=c("Supplements", "Lifestyle", "Binary"),
+          ncol=1,
+          align="v")
+
+```
+
+
+```{r}
+
+ggsave("all-vars-ms-post.png", units="in", width=15, height=14, dpi=400) #units="in", width=5, height=4, dpi=300,
+
+```
+
+
+<!-- # Update table with new categories based on variables used for plots above. -->
+<!-- # ============================================================================ -->
+
+```{r, results="markup"}
+
+supp.vars = c("na.all.dt.fe",
+              "na.sup.fe",
+              "na.all.sd.fe",
+              "na.all.dt.ca.100",
+              'na.sup.ca.100',
+              'na.all.sd.ca.100') # NOTE: ca in mg does not scale with the iron values in mg. put separately and keep mg?
+
+
+
+# Group 2. Lifestyle: exercise, BMI, meat consumption, alcohol consumption
+
+
+lifestyle.vars = c("AL.DrinksPWC.4",
+                 "PH2.TotHrsPerWeek.4",
+                 "FG.all.pf.meat.8",
+                 'bmi')
+                 
+# Group 3: years since last menstrual period, reproductive life span (years) that is calculated by subtracting age at menarche from age at menopause based on last menstrual period, estrogen or progesterone use (number of total years), and total years pregnant and breastfeeding
+
+repro.vars = c(hr.covs,  
+               'totpreg.mo2',
+               'rls')
+
+# Group 4: self-report of ever having a health condition at baseline were: preeclampsia, polycystic ovary syndrome (PCOS), irritable bowel syndrome (IBS), colon/rectum polyps, and iron-deficiency anemia (IDA)
+
+health.vars = c('pcos.rev', 
+                'preeclampsia', 
+                'ibd.rev',
+                'polyps.rev',
+                'MC116.f')
+
+# Group 5: : statin use, regular aspirin use (1+/week for 3 or more months), hormone replacement therapy (HRT), and recent blood donation (within past 12 months). We also included three genetic variants that have been confirmed to be associated with serum iron (rs1800562 (HFE gene), rs1799945 (HFE gene), and rs855791 (TMPRSS6 gene))
+
+# Checking results for blood donation in past 12 months
+#model = lm(scale(log.serum.ferritin) ~ blood.don.12mos + baseline.age, 
+#           data=s2.dat)
+
+bin.vars = c('HZ.RX.Chol.Statin.Current',
+             'HZ.RX.NSAID.Aspirin.Current.Reg',
+             'blood.don.12mos')#,
+             #'rs1799945.g',
+             #'rs1800562.a',
+             #'rs855791.g')
+
+table(rev.dat2$outcome.f)
+
+# =======================================================
+sub.dat = rev.dat2[rev.dat2$cov %in% c(supp.vars,
+                                            lifestyle.vars,
+                                            repro.vars,
+                                            health.vars,
+                                            bin.vars)  & !(rev.dat2$outcome.f=="PC1"),]
+head(sub.dat)
+table(sub.dat$cov)
+table(rev.dat2$cov)
+sub.dat = within(sub.dat, {
+  cat2 = ifelse(cov %in% bin.vars, "Binary predictors",
+                ifelse(cov %in% health.vars, "Health conditions (ever)",
+                       ifelse(cov %in% repro.vars, "Reproductive health", 
+                              ifelse(cov %in% lifestyle.vars, "Lifestyle", 
+                                     ifelse(cov %in% supp.vars, "Supplement and Diet", cov )))))
+})
+
+sub.dat2 = sub.dat[, c( "labels", "cat2", "est.ci", "outcome") ]
+
+sub.dat2 = sub.dat2[order(sub.dat2$cat2, sub.dat2$labels, sub.dat2$outcome), 
+                    c( "cat2", "labels", "outcome", "est.ci")]
+# head(sub.dat2)
+
+
+kable(sub.dat2, 
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "Outcome", "Estimate (95\\% CI)"),
+      escape=F,
+      row.names=F,
+      longtable=T,
+      caption="Regression model parameters for various predictors") %>%  
+  #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1:2, width = "15em") %>%
+  collapse_rows(columns =1:2) %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header")) 
+
+```
+
+
+```{r}
+
+save(rev.dat2, supp.plot, hr.plot, cat.plot,
+     supp.plot.mod2, life.plot.mod2, repro.plot.mod, health.plot.mod, cat.plot.mod2,
+     file="section2-dat-post.RData")
+
+```

@@ -1,0 +1,1301 @@
+---
+title: "Data handling for iron project: Predictive models for iron status"
+date: "`r format(Sys.time(), '%d %B, %Y')`"
+output:
+  pdf_document:
+    includes:
+      in_header: ../preamble-latex-nobookdown.tex
+      latex_engine: pdflatex 
+      keep_tex: yes
+      toc: yes
+      toc_depth: 3
+      number_sections: true
+  html_document:
+    theme: united
+    toc: yes
+fig.cap: yes
+editor_options:
+  chunk_output_type: console
+geometry: margin=1.5cm
+urlcolor: blue
+linkcolor: magenta
+citecolor: red
+---
+
+<!-- NOTE: Only run if new data. -->
+
+# Data handling for the R project
+
+```{r , include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      results = 'hide',
+                      warning = F,
+                      tidy.opts=list(width.cutoff=80),
+                      tidy=TRUE,
+                      comment=NA,
+                      prompt=F,
+                      cache=F)
+
+#runif(1, 0, 10^8)
+set.seed(74268794)
+
+```
+
+
+```{r, include=F}
+# bring in packages
+
+require("DiagrammeR")
+require(haven)
+
+require(labelled)
+require(tableone)
+require(summarytools)
+
+```
+
+
+
+```{r, eval=F}
+# only re-run if new data
+
+# read original SAS data into R
+
+df1. =  read_sas(data_file="../../Sister Study/data/dr00224_04_01/dr00224_04_01.sas7bdat",
+                 catalog_file = "../../Sister Study/formats-subset/sisformats.sas7bcat" ) # updated with new data, received 11/2021
+
+class(df1.)
+dim(df1.)
+table(df1.$UMN_Iron)
+
+save(df1., file="origdata.RData")
+
+```
+
+
+
+```{r, eval=T}
+
+load(file="origdata.RData") # df1. from above
+```
+
+
+```{r}
+# new variables requested in Fall 2021
+
+
+# PCOS 
+# create new binary variable, pcos.rev
+# =====================================
+
+table(df1.$FU_PCOS_DxPreBaseline)
+prop.table(table(df1.$FU_PCOS_DxPreBaseline))
+
+
+table(as_factor(df1.$FU_PCOS_Event))
+attributes(df1.$FU_PCOS_DxPreBaseline)
+df1.$pcos = as_factor(df1.$FU_PCOS_DxPreBaseline)
+table(df1.$pcos, useNA = "always") # just a lot of missing due to people reporting pcos but uncertain of timing around baseline.
+dim(df1.)
+
+#table(df1.$FU_PCOS_DxPreBaseline)
+attributes(df1.$FU_PCOS_DxAgeExact)
+
+# Set to missing those who are '.U) Unknown if Pre or Post'
+df1. = within(df1., {
+  pcos.rev = ifelse(is.na(pcos), 0,
+                    ifelse(pcos=="1) Pre", 1, 
+                           ifelse(pcos=="0) Post", 0, NA)))
+})
+
+with(df1., table(pcos, pcos.rev, useNA="always"))
+
+
+# preeclampsia
+# ======================================
+table(df1.$PG_AnyEclampsia)
+df1.$preeclampsia = as_factor(df1.$PG_AnyEclampsia)
+table(df1.$preeclampsia, useNA="always") # look at missing codes
+
+df1.$preeclampsia = zap_missing(df1.$PG_AnyEclampsia)
+table(df1.$preeclampsia, useNA="always") # group all missing together as missing
+
+
+# IBD, including ulcerative colitis
+# =======================
+table(as_factor(df1.$FU_IBD_Event), useNA="always")
+
+df1. = within(df1., {
+  ibd = as_factor(FU_IBD_Event)
+  ibd.rev = ifelse(ibd %in% c("0) Non-Event", "1) Event"), 0,
+                    ifelse(ibd==".B) Pre-baseline", 1, NA)) # set to missing any uncertain times. only people who have polyps at or before baseline = 1
+})
+
+table(df1.$ibd)
+table(df1.$ibd.rev)
+
+# Colon or rectum polyps, benign
+# ===================================
+df1.$polyps = as_factor(df1.$FU_Polyps_Event)
+table(df1.$polyps)
+
+df1. = within(df1., {
+  polyps.rev = ifelse(polyps %in% c("0) Non-Event", "1) Event"), 0,
+                    ifelse(polyps==".B) Pre-baseline", 1, NA)) # set to missing any uncertain times. only people who have polyps at or before baseline = 1
+})
+
+table(df1.$polyps.rev, useNA="always")
+
+# Number of baseline full-term pregnancies
+# =====================================
+
+df1.$term.preg.factor = with(df1., as_factor(df1.$PG_TermNum))
+class(df1.$term.preg.factor)
+df1.$term.preg.num.wrong = as.numeric(df1.$term.preg.factor)
+
+table(df1.$term.preg.factor, df1.$term.preg.num.wrong)
+
+df1. = within(df1., {
+  term.preg = ifelse(term.preg.num.wrong<=13, term.preg.num.wrong-1, NA)
+})
+  
+table(df1.$term.preg, useNA="always")
+table(df1.$term.preg)
+
+
+# Number of baseline pregnancies
+# =========================================
+
+class(df1.$PG_Gravidity)
+summary(df1.$PG_Gravidity)
+table(df1.$PG_Gravidity)
+table(as_factor(df1.$PG_Gravidity), useNA="always") # check
+
+
+# Number of pregnancies that are not miscarriages
+# ================================================
+summary(with(df1., PG_Gravidity - PG_Miscarriage))
+table(as_factor(df1.$PG_Gravidity), useNA="always") # check
+table(as_factor(zap_missing(df1.$PG_Miscarriage)), useNA="always") # check
+
+
+# number of pregnancies, excluding miscarriages and spontaneous abortion
+df1. = within(df1., {
+  t.preg =  as.numeric(PG_Gravidity - zap_missing(PG_Miscarriage))
+})
+
+summary(df1.$t.preg)
+summary(df1.$PG_Gravidity)
+summary(df1.$PG_Miscarriage)
+
+
+df1. = within(df1., {
+  totpreg.mo = as.numeric(PG_PregTotDur)  # total months pregnant 
+  totpreg.mo2 = (as.numeric(PG_PregTotDur) + as.numeric(PG_BreastTotal))/12 # total months/12 pregnant and total months breastfeeding
+})
+
+min(df1.$totpreg.mo, na.rm=T)
+# new variables to keep in df1.:  pcos.rev, preeclampsia, ibd.rev, t.preg
+
+
+# Recent blood donation
+# ===========================
+
+table(df1.$MC234, useNA = "always")
+
+df1. = within(df1., {
+  blood.don.12mos = ifelse(MC234==0, 0,
+                           ifelse(MC236==1, 1, 
+                                  ifelse(MC236==0, 0, NA)))
+})
+
+with(df1., table(blood.don.12mos, MC234, useNA = "always")) # check
+
+
+# Scaled iron supplement and dietary info
+df1. = within(df1., {
+  na_all_dt_fe_1000 = na_all_dt_fe/1000
+  na_all_sd_fe_1000 = na_all_sd_fe/1000
+  na_sup_fe_1000 = na_sup_fe/1000
+  })
+
+```
+
+```{r, eval=T}
+
+with(df1.[df1.$UMN_Iron==1,], table(UMN_Iron_Subcohort, FU_BCInvD_Event,
+                                    useNA="always")) 
+
+
+# there are 7 people who are not in subcohort and do not have an event according to the 'FU_BCInvD_Event' variable
+
+# ids of these 7 people.
+pblm.ids = df1.[df1.$UMN_Iron==1 & (df1.$FU_BCInvD_Event==0 & is.na(df1.$UMN_Iron_Subcohort)),]$PSID
+tot = pblm.ids[complete.cases(pblm.ids)]; tot
+write.csv(tot, file="question-ids.csv")
+
+# get names of iron and nail variables
+
+iron.names = grep("Iron", names(df1.))
+iron.names2 = names(df1.[iron.names]); iron.names2
+
+nail.names = grep("nail", names(df1.)); nail.names
+nail.names2 = names(df1.[nail.names]); nail.names2
+
+sclage.names = grep("SCL_Serum", names(df1.)); sclage.names
+sclage.names2 = names(df1.[sclage.names]); sclage.names2
+
+serum.names = grep("Serum", names(df1.)); serum.names
+serum.names2 = names(df1.[serum.names]); serum.names2
+
+aspirin.names = grep("Aspirin", names(df1.)); aspirin.names
+aspirin.names2 = names(df1.[aspirin.names]); aspirin.names2
+
+statin.names = grep("Statin", names(df1.)); statin.names
+statin.names2 = names(df1.[statin.names]); statin.names2
+
+# BH_RX_NSAID_Aspirin_Current_Reg: CALC: 1st detailed follow-up - Currently use aspirin regularly 1+ times/week for 3+ months [H170,H171]
+
+# TH_RX_NSAID_Aspirin_Current_Reg: CALC: 2nd detailed follow-up - Currently use aspirin regularly 1+ times/week for 3+ months [TH192,TH193]
+
+# LH_RX_NSAID_Aspirin_Current_Reg	CALC: 3rd detailed follow-up - Currently use aspirin regularly 1+ times/week for 3+ months [LH167,LH168]
+
+# HZ_RX_NSAID_Aspirin_Current_Reg: CALC: Harmonized - Currently use aspirin regularly (1+/wk, 3+ mos)
+
+# HZ_RX_NSAID_Aspirin_Years_Reg: CALC: Harmonized - Total years used aspirin regularly (1+/wk, 3+ mos) (See HZ_RX_NSAID_Aspirin_YrMiss)
+
+supp.vars.baseline = names(df1.)[grep("itm16", names(df1.))]; supp.vars.baseline
+
+summary(df1.[serum.names2])
+summary(df1.$FG_all_f_citmlb)
+
+
+freq.period.vars = c('HR57',
+'HR58_01',
+'HR58_02',
+'HR58_03',
+'HR58_04',
+'HR58_05',
+'HR58_06',
+'HR58_07',
+'HR58_08',
+'HR58_09',
+'HR58_10',
+'HR59_01',
+'HR59_02',
+'HR59_03',
+'HR59_04',
+'HR59_05',
+'HR59_06',
+'HR59_07',
+'HR59_08',
+'HR59_09',
+'HR59_10',
+'HR60_01',
+'HR60_02',
+'HR60_03',
+'HR60_04',
+'HR60_05',
+'HR60_06',
+'HR60_07',
+'HR60_08',
+'HR60_09',
+'HR60_10'
+)
+
+extra.pcos.vars = c('DR224_PCOS_DxAgeImp',
+                    'FU_PCOS_DxAge',
+                    'FU_PCOS_DxAgeExact',
+                    'FU_PCOS_DxAgeExactMax',
+                    'FU_PCOS_DxAgeExactMin',
+                    'DR224_Adeno_DxAgeImp',
+                      'DR224_Adeno_EOFAgeExactImp',
+                      'DR224_Adeno_EOFAgeImp',
+                      'DR224_Adeno_FLAG_DxImp',
+                      'DR224_BCInvD_DxAgeExactImp',
+                      'DR224_BCInvD_DxAgeImp',
+                      'DR224_BCInvD_EOFAgeExactImp',
+                      'DR224_BCInvD_EOFAgeImp',
+                      'DR224_BCInvD_FLAG_DxImp',
+                      'DR224_BCInvNoD_DxAgeExactImp',
+                      'DR224_BCInvNoD_DxAgeImp',
+                      'DR224_BCInvNoD_EOFAgeExactImp',
+                      'DR224_BCInvNoD_EOFAgeImp',
+                      'DR224_BCInvNoD_FLAG_DxImp',
+                      'DR224_BCInv_DxAgeExactImp',
+                      'DR224_BCInv_DxAgeImp',
+                      'DR224_BCInv_EOFAgeExactImp',
+                      'DR224_BCInv_EOFAgeImp',
+                      'DR224_BCInv_FLAG_DxImp',
+                      'DR224_BC_DxAgeExactImp',
+                      'DR224_BC_DxAgeImp',
+                      'DR224_BC_EOFAgeExactImp',
+                      'DR224_BC_EOFAgeImp',
+                      'DR224_BC_FLAG_DxImp',
+                      'DR224_CholBord_DxAgeExactImp',
+                      'DR224_CholBord_DxAgeImp',
+                      'DR224_CholBord_EOFAgeExactImp',
+                      'DR224_CholBord_EOFAgeImp',
+                      'DR224_CholBord_FLAG_DxImp',
+                      'DR224_Chol_DxAgeExactImp',
+                      'DR224_Chol_DxAgeImp',
+                      'DR224_Chol_EOFAgeExactImp',
+                      'DR224_Chol_EOFAgeImp',
+                      'DR224_Chol_FLAG_DxImp',
+                      'DR224_DC_Baseline_ToenailColl_Mo',
+                      'DR224_DC_Baseline_ToenailColl_Yr',
+                      'DR224_DC_SCL_ToenailColl_Mo',
+                      'DR224_DC_SCL_ToenailColl_Yr',
+                      'DR224_Endo_DxAgeExactImp',
+                      'DR224_Endo_DxAgeImp',
+                      'DR224_Endo_EOFAgeExactImp',
+                      'DR224_Endo_EOFAgeImp',
+                      'DR224_Endo_FLAG_DxImp',
+                      'DR224_FU_BCInvD_Event_Serum',
+                      'DR224_FU_BCInvNoD_Event_Serum',
+                      'DR224_FU_BCInv_Event_Serum',
+                      'DR224_FU_BC_Event_Serum',
+                      'DR224_Fibroids_DxAgeExactImp',
+                      'DR224_Fibroids_DxAgeImp',
+                      'DR224_Fibroids_EOFAgeExactImp',
+                      'DR224_Fibroids_EOFAgeImp',
+                      'DR224_Fibroids_FLAG_DxImp',
+                      'DR224_HR_RLX_Ever',
+                      'DR224_HR_RLX_Ever_T1',
+                      'DR224_HR_RLX_Ever_T2',
+                      'DR224_HR_RLX_Ever_T3',
+                      'DR224_HR_RLX_Ever_T4',
+                      'DR224_HR_RLX_Years',
+                      'DR224_HR_RLX_Years_T1',
+                      'DR224_HR_RLX_Years_T2',
+                      'DR224_HR_RLX_Years_T3',
+                      'DR224_HR_RLX_Years_T4',
+                      'DR224_HR_RLXcurrent',
+                      'DR224_HR_RLXcurrent_T1',
+                      'DR224_HR_RLXcurrent_T2',
+                      'DR224_HR_RLXcurrent_T3',
+                      'DR224_HR_RLXcurrent_T4',
+                      'DR224_HR_TMX_Ever',
+                      'DR224_HR_TMX_Ever_T1',
+                      'DR224_HR_TMX_Ever_T2',
+                      'DR224_HR_TMX_Ever_T3',
+                      'DR224_HR_TMX_Ever_T4',
+                      'DR224_HR_TMX_Years',
+                      'DR224_HR_TMX_Years_T1',
+                      'DR224_HR_TMX_Years_T2',
+                      'DR224_HR_TMX_Years_T3',
+                      'DR224_HR_TMX_Years_T4',
+                      'DR224_HR_TMXcurrent',
+                      'DR224_HR_TMXcurrent_T1',
+                      'DR224_HR_TMXcurrent_T2',
+                      'DR224_HR_TMXcurrent_T3',
+                      'DR224_HR_TMXcurrent_T4',
+                      'DR224_HTNBord_DxAgeExactImp',
+                      'DR224_HTNBord_DxAgeImp',
+                      'DR224_HTNBord_EOFAgeExactImp',
+                      'DR224_HTNBord_EOFAgeImp',
+                      'DR224_HTNBord_FLAG_DxImp',
+                      'DR224_HTN_DxAgeExactImp',
+                      'DR224_HTN_DxAgeImp',
+                      'DR224_HTN_EOFAgeExactImp',
+                      'DR224_HTN_EOFAgeImp',
+                      'DR224_HTN_FLAG_DxImp',
+                      'DR224_IBD_Crohns_DxAgeExactImp',
+                      'DR224_IBD_Crohns_DxAgeImp',
+                      'DR224_IBD_Crohns_EOFAgeExactImp',
+                      'DR224_IBD_Crohns_EOFAgeImp',
+                      'DR224_IBD_Crohns_FLAG_DxImp',
+                      'DR224_IBD_DxAgeExactImp',
+                      'DR224_IBD_DxAgeImp',
+                      'DR224_IBD_EOFAgeExactImp',
+                      'DR224_IBD_EOFAgeImp',
+                      'DR224_IBD_FLAG_DxImp',
+                      'DR224_IBD_UC_DxAgeExactImp',
+                      'DR224_IBD_UC_DxAgeImp',
+                      'DR224_IBD_UC_EOFAgeExactImp',
+                      'DR224_IBD_UC_EOFAgeImp',
+                      'DR224_IBD_UC_FLAG_DxImp',
+                      'DR224_PCOS_DxAgeExactImp',
+                      'DR224_PCOS_DxAgeImp',
+                      'DR224_PCOS_EOFAgeExactImp',
+                      'DR224_PCOS_EOFAgeImp',
+                      'DR224_PCOS_FLAG_DxImp',
+                      'DR224_PG_FLAG_HTN_GestHTN',
+                      'DR224_PG_FLAG_HTN_Preg',
+                      'DR224_PG_HBP_NoEcl',
+                      'DR224_PG_HBP_NoEcl_Age',
+                      'DR224_PG_HBP_NoEcl_AgeLast',
+                      'DR224_PG_HBP_NoEcl_PregLast',
+                      'DR224_PG_HBP_NoEcl_PregNum',
+                      'DR224_PG_HBP_NoEcl_Tot',
+                      'DR224_PG_HBPbord_NoEcl',
+                      'DR224_PG_HBPbord_NoEcl_Age',
+                      'DR224_PG_HBPbord_NoEcl_AgeLast',
+                      'DR224_PG_HBPbord_NoEcl_PregLast',
+                      'DR224_PG_HBPbord_NoEcl_PregNum',
+                      'DR224_PG_HBPbord_NoEcl_Tot',
+                      'DR224_Polyps_DxAgeExactImp',
+                      'DR224_Polyps_DxAgeImp',
+                      'DR224_Polyps_EOFAgeExactImp',
+                      'DR224_Polyps_EOFAgeImp',
+                      'DR224_Polyps_FLAG_DxImp',
+                      'DR224_RTI_Toenail_CollMo_Big',
+                      'DR224_RTI_Toenail_CollMo_Other',
+                      'DR224_RTI_Toenail_CollYr_Big',
+                      'DR224_RTI_Toenail_CollYr_Other',
+                      'DR224_SCL_Serum_Draw_Year',
+                      'DR224_Serum_Draw_Year',
+                      'DR224_Trig_DxAgeExactImp',
+                      'DR224_Trig_DxAgeImp',
+                      'DR224_Trig_EOFAgeExactImp',
+                      'DR224_Trig_EOFAgeImp',
+                      'DR224_Trig_FLAG_DxImp')
+
+
+other.vars = c( 'FU_PCOS_DxPreBaseline',
+                
+                      'FU_PCOS_DxReportSource',
+                      'FU_PCOS_EOFAge',
+                      'FU_PCOS_EOFAgeExact',
+                      'FU_PCOS_Event',
+                      'FU_PCOS_ReportDate_Source')
+
+                      
+```
+
+```{r}
+
+# eclampsia-related variables
+eclampsia.names = grep("Ecl", names(df1.)); eclampsia.names
+
+eclampsia.names2 = names(df1.[eclampsia.names]); eclampsia.names2
+
+# smoking related variables
+smoke.names = grep("ok", names(df1.)); smoke.names
+smoke.names2 = names(df1.[smoke.names]); smoke.names2
+
+
+```
+
+
+```{r}
+
+# make list of labels.
+names1 = sapply(df1.[c(aspirin.names2, statin.names2)], function(x) var_label(x))
+class(names1)
+names.dat = data.frame(var = names(names1), label = names1)
+names.dat
+write.csv(names.dat, file="drugsnames.csv")
+
+```
+
+```{r}
+
+df2 = df1.[, c('PSID', 'FU_BCInvD_Event',
+              'AgeExact_Baseline',
+              'FU_BCInvD_EOFAgeExact',
+              'FU_BCInvD_EOFAge', "HH_PSID",
+              'FU_BCInvD_DxAgeExactMax',
+              'FU_BCInvD_DxAgeExactMin',
+              'DR224_FU_BCInvD_Event_Serum',
+              "FU_BC_Event",
+              'SCL_BC_Event',
+              iron.names2, nail.names2, serum.names2, 
+              aspirin.names2, statin.names2, freq.period.vars,
+              eclampsia.names2,
+              'PG_BreastTotal',
+              'PG_MedParity', 'FU_BCInvD_PG_BreastTotal', 'PG_BreastTotal',
+              'pcos.rev', 'preeclampsia', 'ibd.rev', 'polyps.rev', 't.preg', 'totpreg.mo', 'totpreg.mo2',
+              'blood.don.12mos')]
+dim(df2) # 50,884
+
+names.vars = c('PSID', "event", 
+              'baseline.age',
+              'FU_BCInvD_EOFAgeExact',
+              'FU_BCInvD_EOFAge', 'HH_PSID',
+              'FU_BCInvD_DxAgeExactMax',
+              'FU_BCInvD_DxAgeExactMin',
+              'DR224_FU_BCInvD_Event_Serum',
+              "FU_BC_Event",
+              'SCL_BC_Event',
+              iron.names2, nail.names2, serum.names2,
+              aspirin.names2, statin.names2, freq.period.vars,
+              eclampsia.names2,
+              'PG_BreastTotal',
+              'PG_MedParity', 'FU_BCInvD_PG_BreastTotal', 'PG_BreastTotal',
+              'pcos.rev', 'preeclampsia', 'ibd.rev', 'polyps.rev', 't.preg', 'totpreg.mo', 'totpreg.mo2',
+              'blood.don.12mos')
+
+colnames(df2) = names.vars
+df2 = data.frame(df2)
+
+df2 = within(df2, {
+  c.age = ifelse(is.na(FU_BCInvD_EOFAgeExact),
+                    FU_BCInvD_EOFAge + round(runif(nrow(df2),0,1), 2), 
+                    FU_BCInvD_EOFAgeExact)
+  start.age = baseline.age
+  futime = c.age - start.age
+  
+})
+
+
+# follow-up time for total sample?
+summary(df2$futime)
+summary(df2$FU_BCInvD_EOFAgeExact - df2$baseline.age)
+summary(df2$FU_BCInvD_EOFAge- df2$baseline.age)
+summary(df2$c.age)
+
+head(df2[which(df2$futime<0), c("futime", "FU_BCInvD_EOFAgeExact", "FU_BCInvD_EOFAge", "baseline.age", "c.age", "event")])
+
+# select people from study
+df2 = df2[df2$UMN_Iron==1,]
+dim(df2) # 6011
+summary(df2$futime)
+
+table(as_factor(df2$DR224_FU_BCInvD_Event_Serum))
+
+
+df2 = df2[which(complete.cases(df2$PSID)),]
+dim(df2)  # 6008 (eliminate 3 people who overlap in prospective BRCA study and twice studied validation). see "Sampling Protocol for Iron Project based on Iron Panel Assays in Serum_20190715.docx"
+
+table(as_factor(df2$UMN_Iron_Subcohort))
+
+```
+
+
+```{r}
+# Source: https://cran.r-project.org/web/packages/summarytools/vignettes/Recommendations-rmarkdown.html
+st_options(bootstrap.css     = FALSE,       # Already part of the theme so no need for it
+           plain.ascii       = FALSE,       # One of the essential settings
+           style             = "rmarkdown", # Idem.
+           dfSummary.silent  = TRUE,        # Suppresses messages about temporary files
+           footnote          = NA,          # Keeping the results minimalistic
+           subtitle.emphasis = FALSE)       # For the vignette theme, this gives
+                                            # much better results. Your mileage may vary.
+```
+
+
+\blandscape
+
+```{r, results='asis', eval=F}
+# NOTE: this chunk does not work in bookdown
+
+# Source: https://dabblingwithdata.wordpress.com/2018/01/02/my-favourite-r-package-for-summarising-data/
+dfSummary(df2, graph.magnif = 0.5)
+
+```
+
+
+\elandscape
+
+```{r, eval=F, include=F}
+
+# check number of cases in subcohort to make sure it matches with
+# "Sampling Protocol for Iron Project based on Iron Panel Assays in Serum_20190715.pdf" document
+# that document has 125+78 = 203 cases
+
+table(as_factor(df2$UMN_Iron_Subcohort), df2$event)
+# I get 232 cases. One reason for difference could be that these cases were from release 7 and 203 cases were from release 6 when the document was made (see 4/15/2020 email from Deb Bookwalter)
+
+```
+
+
+```{r}
+
+df3. = df2
+dim(df3.)
+
+# Get labels back
+df3. <- df3. %>% copy_labels_from(df1.) # Source: http://larmarange.github.io/labelled/reference/copy_labels.html
+
+# create a subcohort binary variable: 1=subcohort 0=not
+
+df3.$UMN_Iron_Subcohort[is.na(df3.$UMN_Iron_Subcohort)] = 0 # convert missing to 0s
+head(df3.$UMN_Iron_Subcohort) # check
+dim(df3.)
+table(is.na(df3.$PSID))
+
+
+table(df3.$UMN_Iron_Subcohort)  # check. This matches numbers in documentation.
+
+with(df3., table(UMN_Iron_Subcohort, event))
+with(df3., sum(table(UMN_Iron_Subcohort, event)))
+df3.$iron.study = df3.$UMN_Iron
+
+head(df3.[which(df3.$UMN_Iron_Subcohort==0 & df3.$event==0), c("PSID", "UMN_Iron_Baseline_FE",
+                                                        "iron.study", "UMN_Iron_Subcohort",
+                                                        "UMN_Iron_SCL_BCInvD_Event", "event",
+                                                        "start.age", "c.age")], 15)
+
+psid.exclude.noevent = df3.[which(df3.$UMN_Iron_Subcohort==0 & df3.$event==0),]$PSID
+psid.exclude.noevent
+# 7 people are not in subcohort, but they do not have an event. Will exclude later
+
+# One of these participants is labeled as cases with UMN_Iron_SCL_BCInvD_Event (UMN Iron: Prospective BrCa Survivor Study, SCL BrCa case status at time of sampling (1=dx before SCL blood draw 0=dx after SCL Blood Draw) [data release 6.0])
+
+head(df1.[df1.$PSID %in% c('00224_200085'),
+          c("PSID",  "UMN_Iron_Baseline_FE", "UMN_Iron_Subcohort",
+            "UMN_Iron_Validation", "UMN_Iron_SCL_BCInvD_Event", "FU_BCInvD_Event",
+            "AgeExact_Baseline", "FU_BCInvD_EOFAge")] )
+
+  with(df3., table(UMN_Iron_Subcohort, event))
+table(df3.$UMN_Iron_Subcohort)
+
+df3.$subcohort = df3.$UMN_Iron_Subcohort
+with(df3., table(subcohort, event))
+
+nrow(df3.)
+table(df3.$subcohort)
+
+with(df3., table(subcohort, event, useNA="always")) #2796+9 = 2805 and 2978+222 = 3200
+# there are 7 people who are not in subcohort and do not have an event according to the 'FU_BCInvD_Event' variable
+# They are people who were cases in v6 but not in v8.
+
+dim(df3.) # 6008
+
+```
+
+
+
+### Remove participants who are missing at least one iron measure (6008-5952 = 56)
+
+
+```{r}
+
+
+df7 = df3.[!(is.na(df3.$UMN_Iron_Baseline_FE)) |
+           !(is.na(df3.$UMN_Iron_Baseline_FERTN)) |
+           !(is.na(df3.$UMN_Iron_Baseline_FESAT)),]
+
+dim(df7) # with at least one non-missing iron val, 5952
+dim(df3.) - dim(df7) # remove 56 with missing baseline iron values
+
+dim(df3.) # 5963-5907 = 56 
+
+sum(table(df7$subcohort))
+table(df7$subcohort)
+
+```
+
+
+
+### Include participants from subcohort (exclude cases) (5952 - 2781 = 3171)
+
+```{r}
+
+df8 = df7[df7$subcohort==1,]
+
+dim(df7) # with at least one non-missing iron val, 5952
+dim(df7) - dim(df8) # remove 2781 from cases
+
+dim(df8) # 5952-2781 = 3171
+
+```
+
+
+
+
+```{r}
+
+psid.include = df8$PSID
+length(psid.include)  # 3171
+
+save(psid.include, file="ids-include.RData")
+
+table(df8$subcohort, df8$event)
+
+```
+
+
+
+```{r, eval=F, include=F}
+# NOTE: run this separately, go to viewer, select Export|Copy to Clipboard, enlarging width while keeping aspect ratio. Then paste into Microsoft Paint program and crop to fit. Save as flowchart.png. (or save as png directly in viewer as Export|Save as Image)
+
+
+# sources: https://www.graphviz.org/Documentation/TSE93.pdf
+# https://stackoverflow.com/questions/27110526/how-to-manage-distance-between-nodes-in-graphviz
+fig.sample <- "
+digraph flow2 {
+
+  # several 'node' statements
+  node [shape = box,
+        fontname=Arial, fontsize=50,
+        color = black]; // for the letter nodes, use box shapes
+
+# Source: https://graphviz.readthedocs.io/en/stable/manual.html
+  edge [arrowhead=vee arrowsize=4 ]
+
+  Z[label=\"n=6,008 \"];
+  Z1[label=\"Missing at least one \niron measure (n=56)\"];
+
+  A[label=\"n=5,952\"]; 
+
+  A1[label=\"Cases (n=2781)\"];
+
+  C[label=\"n=3,171 \n from subcohort\"]; 
+  
+  {rank = same; Z Z1}
+  {rank = same; A A1}
+  {rank = same; C}
+  
+  # several 'edge' statements
+  edge [color = black] // this sets all edges to be black (unless overridden)
+
+    Z -> Z1;
+    Z -> A;
+
+    A -> A1;
+    A -> C;
+    
+  # a 'graph' statement
+  graph [overlap = true
+        nodesep=\"1\",
+        ranksep=\"1\"]
+}
+"
+
+grViz(fig.sample)
+```
+
+![Exclusions](../sections/flow-sample-cch.png)
+
+
+<!-- ======================================================== -->
+<!-- END OF SAMPLE SELECTION, START OF DATA HANDLING -->
+<!-- ======================================================== -->
+
+```{r}
+
+iron.supp.vars = c(
+              'TQ75',
+              'TQ75a',
+              'TQ75b',
+              'TQ75c',
+              'LL94',
+              'LL94a',
+              'LL94b',
+              'LL94c')
+
+ida.vars = c('MC116', # MC116. Ever diagnosed with iron deficiency anemia
+              'MC117') # MC117. Age first diagnosed with iron deficiency anemia
+
+#lmp.vars = c('FU_BCInv_LMP',
+#             'FU_BCInv_LMPExact',
+#             'FU_BCInv_LMPStatus')
+
+blood.vars = c('MC234',
+              'MC236',
+              'MC235no',
+              'MC235un')
+
+other.vars = c('na_all_dt_fe', 
+               'na_all_sd_fe',
+               'na_sup_fe',
+               'FG_all_pf_meat',
+                 'na_all_dt_fe',
+                'HR_DiffLMPintv', 'HR_Menopause',
+                'AL_DrinksPWC',
+                'PH2_TotHrsPerWeek',
+                'HR_HRT_Years', 'HR_HRTcurrent',
+#               'dh_vm_yn_itm16',
+#               'dh_vm_yn_itm14',
+                'dh_vm_yn4_itm14r', 
+               'na_all_dt_ca', 'na_all_sd_ca',
+               'na_sup_ca') # based on SAP
+
+ 
+df2 = df1.[, c('PSID', 'FU_BCInvD_Event',
+              'HR_Menopause', 
+              'HR_MenopauseAge',
+              'AgeExact_Baseline',
+              'SM_SmokeStatusN',
+              'FU_BC_AL_Status',
+              'SE18',
+              'EX_BMI_final',
+              'EX_BMI_CDC_final',
+              'Ex_Waist',
+              'Ex_Height_final',
+              'HR_HRT_Ever',
+              'PG_TermNum',
+              'HR_HR1Ever',
+              'AgeExact_Baseline',
+              'FU_BCInvD_EOFAgeExact',
+              'FU_BCInvD_EOFAge',
+              'FU_BCInvD_MenopauseAge',
+              'Study',
+              'MC234',  # MC234 (Main) MC218 (Vanguard). R has ever given blood
+              'MC236', # MC236 (Main) MC220 (Vanguard). Given blood in past 12 mos
+              'MC235no', # MC235 (Main) MC219 (Vanguard). # of times/gallons blood donated
+              'MC235un', # MC235 (Main) MC219 (Vanguard). unit (times/gallons) blood donated
+              'HH_PSID',
+              "PG_MedParity",'PG_MenarcheAge',
+              'PG_AgeFirstLiveBirth', 
+              'FU_BCInvD_DxType', 'MC114', "MC115",
+              'FU_BC_DxPR_Result', 'FU_BC_DxER_Result', 'FU_BCInvD_DxHER2_Result',
+              'UMN_Iron_Subcohort',
+              'UMN_Iron_Validation',
+              'SE_RACE15', 'SE_RACE_ETH',
+              "UMN_Iron_SCL_BCInvD_Event",
+              "FU_BCInvD_DxAgeExactMax", "FU_BCInvD_DxAgeExactMin",
+              iron.supp.vars, blood.vars, ida.vars,  nail.names2, iron.names2, serum.names2, 
+              statin.names2, aspirin.names2, eclampsia.names2,
+              "UMN_Iron_Baseline_FE", "UMN_Iron_Baseline_FERTN",
+              "UMN_Iron_Baseline_UIBC", "UMN_Iron_Baseline_TIBC", "UMN_Iron_Baseline_FESAT",
+              'RTI_Toenail_fe', 'RTI_Toenail_fe_Adj', 'RTI_Toenail_Source',
+              supp.vars.baseline, other.vars, 'OncoArray_ONC_ID', freq.period.vars,
+              'PG_MedParity', 'FU_BCInvD_PG_BreastTotal', 'PG_BreastTotal',
+              'pcos.rev', 'preeclampsia', 'ibd.rev', 'polyps.rev', 't.preg', 'totpreg.mo', 'totpreg.mo2',
+              'blood.don.12mos',
+              'PG_BreastTotal')]
+
+dim(df2) # 50,884
+length(names(df2))
+
+other.vars[!(other.vars %in% names(df1.))]
+
+names.vars = c('PSID', "event", 
+               "menop.status", 
+               "menop.age",
+               'baseline.age',
+               'smoke',
+               'alc',
+               'educ',
+               'bmi',
+               'EX_BMI_CDC_final',
+               'waist',
+               'height',
+               'ever.hrt',
+               'term.births',
+               'birth.control',
+               'AgeExact_Baseline',
+              'FU_BCInvD_EOFAgeExact',
+              'FU_BCInvD_EOFAge',
+              'fu.meno.age',
+              'study', 
+              'ever.donate.b',
+              'donate.b.12',
+              'no.times.donate.b',
+              'unit.donate.b', 'HH_PSID',
+               "parity", 'age.menarche',
+               "age.firstbirth",
+              "FU_BCInvD_DxType", 'MC114', "MC115",
+              'FU_BC_DxPR_Result', 'FU_BC_DxER_Result', 'FU_BCInvD_DxHER2_Result',
+              'UMN_Iron_Subcohort',
+              'UMN_Iron_Validation',
+              'SE_RACE15', 'SE_RACE_ETH',
+              "UMN_Iron_SCL_BCInvD_Event",
+              "FU_BCInvD_DxAgeExactMax", "FU_BCInvD_DxAgeExactMin",
+              iron.supp.vars, blood.vars, ida.vars, nail.names2, iron.names2, serum.names2,
+              statin.names2, aspirin.names2, eclampsia.names2,
+              'fe', 'fertn', 'fesat', 'tibc', 'uibc',
+              'RTI_Toenail_fe', 'RTI_Toenail_fe_Adj', 'RTI_Toenail_Source',
+              supp.vars.baseline, other.vars, 'OncoArray_ONC_ID', freq.period.vars,
+              'PG_MedParity', 'FU_BCInvD_PG_BreastTotal', 'PG_BreastTotal',
+              'pcos.rev', 'preeclampsia', 'ibd.rev', 'polyps.rev', 't.preg', 'totpreg.mo', 'totpreg.mo2',
+              'blood.don.12mos',
+              'PG_BreastTotal')
+
+length(names.vars)
+
+colnames(df2) = names.vars
+summary(df2)
+
+
+```
+
+
+
+```{r}
+
+# NOTE: KOB suggested we use min/max follow-up age to find a follow-up age instead of removing from sample.
+# after 3/2020 draft review of 'Association between serum iron biomarkers and breast cancer' manuscript
+
+df2$median = apply(df2[c("FU_BCInvD_DxAgeExactMax", "FU_BCInvD_DxAgeExactMin")], 1, median)
+head(df2[is.na(df2$FU_BCInvD_EOFAgeExact), c("event", 
+                                     "FU_BCInvD_DxAgeExactMax", "FU_BCInvD_DxAgeExactMin",
+                                     "FU_BCInvD_EOFAgeExact", "FU_BCInvD_EOFAge", 
+                                      "median")])
+
+```
+
+```{r}
+
+df2 = data.frame(df2) # note that need data frame format for within function to work below
+
+# some more data handling
+class(df2)
+
+df2 = within(df2, {
+  # Make age at first birth categorical variable
+  age.firstbirth.rev = ifelse(is.na(age.firstbirth)==T, -1, age.firstbirth) # make nulliparous its own category
+  age.firstbirth.cat = cut(age.firstbirth.rev, c(-1, 0, 20, 24, 29, 55), include.lowest = T)
+  age.firstbirth.cat = relevel(age.firstbirth.cat, ref="(20,24]")
+
+  age.firstbirth.cat.table = factor(age.firstbirth.cat,
+                                    levels = c("[-1,0]",
+                                               "(0,20]",
+                                               "(20,24]",
+                                               "(24,29]",
+                                               "(29,55]"))
+  
+  # serum ages
+  serum.age = ifelse(!(is.na(Serum_Draw_AgeExact)), Serum_Draw_AgeExact,
+                     ifelse(Serum_Draw==1, Serum_Draw_Age + runif(nrow(df2), 0, 1), NA)) # if exact age missing, and a draw then put draw age + random uniform # between 0,1
+
+  scl.serum.age = ifelse(!(is.na(SCL_Serum_Draw_AgeExact)), SCL_Serum_Draw_AgeExact,
+                         ifelse(SCL_Serum_Draw==1, SCL_Serum_Draw_Age + runif(nrow(df2),0,1), NA)) # if exact age missing, and a draw then put draw age
+
+  serum.age.diff = scl.serum.age - serum.age
+
+  # nail ages
+  nail.age = ifelse(!(is.na(DC_Baseline_Toenail_AgeExact)), DC_Baseline_Toenail_AgeExact,
+                     ifelse(SCL_Toenails_Collected==1, DC_Baseline_Toenail_Age + runif(nrow(df2), 0, 1), NA)) # if exact age missing, and a draw then put draw age + random uniform # between 0,1
+
+  scl.nail.age = ifelse(!(is.na(DC_SCL_Toenail_AgeExact)), DC_SCL_Toenail_AgeExact,
+                         ifelse(SCL_Toenails_Collected==1, DC_SCL_Toenail_Age + runif(nrow(df2),0,1), NA)) # if exact age missing, and a draw then put draw age
+
+  nail.age.diff = scl.nail.age - nail.age
+
+  
+  })
+
+table(df2$age.firstbirth.cat.table)
+summary(df2$serum.age.diff)
+summary(df2$nail.age.diff)
+
+sapply(df2[,c('fe', 'fertn', 'fesat', 'tibc', 'uibc')],
+       summary)
+
+```
+
+```{r}
+# misc
+table(as_factor(df2$birth.control))
+
+```
+
+
+```{r}
+
+# check transferrin calc
+df2$calc.fesat = with(df2, round((fe/(fe+uibc))*100, 0))
+head(df2[c("fesat", "calc.fesat")])
+
+df2$fesat.diff = with(df2, fesat-calc.fesat)
+head(df2[which(df2$fesat.diff==1), c("fesat", "calc.fesat", "fesat.diff")]) # there might be some with different rounding practices or my measures are not as precise as theirs for calcs.
+table(df2$fesat.diff) # only 7  
+
+with(df2, summary(fesat-calc.fesat))
+with(df2, summary(fesat - ((fe/tibc)*100)))
+
+```
+
+
+```{r}
+
+# menopause ==================
+attributes(df2$menop.status) # look up format in ../data/sas-contents.pdf file
+df2$menop.status.f = zap_missing(df2$menop.status)
+df2$menop.status.f = as_factor(df2$menop.status.f)
+table(df2$menop.status.f)
+
+# smoking ===============================
+attributes(df2$smoke) # HZSMSTAT.
+df2$smoke.f = zap_missing(df2$smoke)
+df2$smoke.f = as_factor(df2$smoke.f)
+table(df2$smoke.f)
+
+# combine 2 unk groups into 1
+df2$smoke.f2 = factor(df2$smoke,
+                     labels = c("Never",
+                                "Past",
+                                "Current"))
+table(df2$smoke.f2)
+
+# Alcohol ===========================
+attributes(df2$alc) # alcstatus.
+df2$alc.f = zap_missing(df2$alc)
+df2$alc.f = as_factor(df2$alc.f)
+table(df2$alc.f)
+
+
+# collapse
+df2$alc.f2 = factor(df2$alc,
+                   labels = c('Never drank',
+'Social',
+'Social',
+'Social',
+'Regular',
+'Regular',
+'Regular',
+'Unknown',
+'Unknown',
+'Unknown'))
+
+table(df2$alc.f2)
+# to do: need to follow up on best way to categorize drinking status.
+
+
+# collapse
+df2$alc.f3 = factor(df2$alc,
+                   labels = c('Never drank',
+'Past',
+'Current',
+'Unk',
+'Past',
+'Current',
+'Unk',
+'Unk',
+'Unk',
+'Unk'))
+
+table(df2$alc.f3)
+
+df2$alc.f4 = ifelse(df2$alc.f3=="Unk", NA, as_factor(df2$alc.f3))
+df2$alc.f4 = factor(df2$alc.f4, labels = c("Never", "Past", "Current"))
+table(df2$alc.f4)
+
+# Education ===========================
+attributes(df2$educ) # SEEDUC.
+df2$educ.f = zap_missing(df2$educ)
+df2$educ.f = as_factor(df2$educ.f)
+table(df2$educ.f)
+
+# combine doctoral and masters and lowest 3 levels
+df2$educ.f2 = factor(df2$educ.f,
+                   labels = c(
+                      "1-3 < high school degree", # no one with no formal schooling
+                      "1-3 < high school degree",
+                      "1-3 < high school degree",
+                      "4-5) Completed high school or GED",
+                      "4-5) Completed high school or GED",
+                      "6) Some college but no degree",
+                      "7) Associate or technical degree",
+                      "8) Bachelor's degree",
+                      "9 \\& 10) Doctoral or Master's degree",
+                      "9 \\& 10) Doctoral or Master's degree"
+                   ))
+table(df2$educ.f2)
+
+# HRT ====================================
+attributes(df2$ever.hrt) # HRYESNO.
+table(df2$ever.hrt)
+df2$ever.hrt.f = factor(df2$ever.hrt, labels = c("No", "Yes"))
+table(df2$ever.hrt.f)
+
+# term.births ============================================
+attributes(df2$term.births) # PGMISS.
+df2$term.births = as.numeric(zap_missing(df2$term.births))
+table(df2$term.births)
+class(df2$term.births) # numeric
+
+# at least one term birth ================================
+df2$one.term.birth = with(df2, ifelse(term.births>0, 1, 0))
+table(df2$one.term.birth)
+df2$one.term.birth.f = factor(df2$one.term.birth,
+                              labels = c("No", "Yes"))
+
+# birth control =========================================
+attributes(df2$birth.control) # HRGRID.
+table(df2$birth.control)
+df2$birth.control.f = factor(df2$birth.control, 
+                             labels = c("No", "Yes"))
+table(df2$birth.control.f, useNA = "always")
+
+# ever donate blood =======================
+attributes(df2$ever.donate.b)
+levels(factor(df2$ever.donate.b))
+df2$ever.donate.b.f = factor(df2$ever.donate.b, labels=c("No", "Yes"))
+  
+levels(factor(df2$study))
+table(as_factor(df2$study))
+
+df2$study.f2 = factor(df2$study, labels = c("Vanguard", "Main"))
+# 1=Vanguard, 2=Main, 3=Two Sisters
+table(df2$study.f2)
+
+
+# race/ethnicity =========================================
+attributes(df2$SE_RACE_ETH)
+df2$race.eth = zap_missing(df2$SE_RACE_ETH)
+df2$race.eth = as_factor(df2$race.eth)
+table(df2$race.eth)
+df2$race.eth = factor(df2$race.eth, 
+                      labels = c("Non-Hispanic White",
+                                 "Non-Hispanic Black",
+                                 "Hispanic",
+                                 "Other"))
+# BMI categories ==================================
+attributes(df2$EX_BMI_CDC_final)
+df2$bmi.cat = as_factor(zap_missing(df2$EX_BMI_CDC_final))
+table(df2$bmi.cat)
+
+summary(df2[c('PG_MedParity', 'FU_BCInvD_PG_BreastTotal', 'PG_BreastTotal')])
+
+# PG_BreastTotal	CALC: Lifetime duration breastfeeding (weeks) [PG24]
+# FU_BCInvD_PG_BreastTotal	CALC: Lifetime duration of breastfeeding (weeks) through end of follow-up based on Inv BC/DCIS Event or Censoring
+# PG_MedParity	CALC: Medical parity, number of births, including stillbirths (multiple birth preg counts as 1)
+# NOTE: divide breastfeeding weeks by 52.1 weeks in a year to get breastfeeding-years
+
+
+df2 = within(df2, {
+  c.age = ifelse(is.na(FU_BCInvD_EOFAgeExact),
+                    FU_BCInvD_EOFAge + round(runif(nrow(df2),0,1), 1), 
+                    FU_BCInvD_EOFAgeExact)
+  start.age = AgeExact_Baseline
+  futime = c.age - start.age
+  
+  # time since menopause (years)
+  time.since.menop = ifelse(is.na(menop.age), 0, start.age - menop.age)
+  
+  # time menstruating (years)
+  yrs.mens = ifelse(is.na(menop.age),
+                    start.age - age.menarche - parity,
+                    menop.age - age.menarche - parity
+                    ) # Note: this variable original in table12.Rmd from age of onset project.
+  
+  # early menopause variable
+  early.menop.45 = ifelse(is.na(menop.age), 0,
+                          ifelse(menop.age<45, 1, 
+                                 ifelse(menop.age<80, 2, NA))) # we will be missing the people who have early menopause after enrollment
+  
+  early45 = ifelse(is.na(menop.age), 0, 
+                   ifelse(menop.age<45, 1, 0)) 
+  menop = ifelse(is.na(menop.age), 0, 1)
+  
+  rls = menop.age - age.menarche - PG_BreastTotal/52.1 - PG_MedParity # rls=reproductive lifespan taking out total number of  pregnancies and total years of breastfeeding
+
+})
+
+with(df2, table(early45, menop, early.menop.45, exclude=NULL))
+table(df2$early.menop.45)
+
+df2$futime = with(df2, ifelse(is.na(futime), c.age-baseline.age, futime))
+summary(df2$futime)
+dim(df2)
+
+prop.table(table(df2$early.menop.45))
+#with(df2, table(early.menop.45, menop.age)) # double check variable.
+
+```
+
+
+
+```{r}
+
+df2$scl.2 = ifelse(is.na(df2$UMN_Iron_SCL_FE), 0, 1)
+df2$UMN_Iron_Subcohort[is.na(df2$UMN_Iron_Subcohort)] = 0 # convert missing to 0s
+df2$subcohort = df2$UMN_Iron_Subcohort
+table(df2$subcohort)
+
+df2$subcohort.nocases = with(df2, ifelse((subcohort==1 & event==0), 1, 0))
+with(df2, table(subcohort.nocases, event))
+
+nrow(df2)
+
+all.dat = df2 # create total data set with derived variables for export
+
+```
+
+
+```{r}
+# Subset to sample
+
+df3 = df2[which(df2$PSID %in% psid.include),]
+nrow(df3)
+
+# Change c.age (end of follow-up to include 9 people who are missing follow-up age) -- see data-handling-cch.Rmd
+summary(df3$c.age)
+df3$c.age = with(df3, ifelse(is.na(c.age), 
+                             median,
+                             c.age))
+summary(df3$c.age)
+
+head(df3[, c("event", 
+             "FU_BCInvD_DxAgeExactMax", "FU_BCInvD_DxAgeExactMin",
+             "FU_BCInvD_EOFAgeExact", "FU_BCInvD_EOFAge", 
+             "c.age")])
+
+
+df3$UMN_Iron_Subcohort[is.na(df3$UMN_Iron_Subcohort)] = 0 # convert missing to 0s
+df3$subcohort = df3$UMN_Iron_Subcohort
+table(df3$subcohort)
+names(df3)
+
+df3$subcohort.nocases = with(df3, ifelse((subcohort==1 & event==0), 1, 0))
+with(df3, table(subcohort.nocases, event))
+
+with(df3, table(subcohort.nocases, event, is.na(SCL_Serum_Draw)))
+```
+
+
+```{r}
+
+
+# Restore labels back for subsetted data
+
+dim(df2) # 50884 by 126
+attributes(df2$AgeExact_Baseline)
+attributes(df3$AgeExact_Baseline)
+
+
+# Problem with haven and subsetting: https://github.com/tidyverse/haven/issues/392
+# Get labels back
+df3 <- df3 %>% copy_labels_from(df1.) # Source: http://larmarange.github.io/labelled/reference/copy_labels.html
+attributes(df3$AgeExact_Baseline) # gets labels back
+
+sub.dat = df3
+attributes(sub.dat$AgeExact_Baseline)
+attributes(sub.dat$FG_all_pf_meat)
+attributes(sub.dat$na_all_sd_fe)
+
+
+```
+
+```{r}
+
+# Read in SNP data. see email from Min, 3/24/2021 at U:\projects\iron-aim4\snp-data
+
+snp.dat = read.table("../snp-data/iron_SNPs.txt", header=T)
+summary(snp.dat)
+
+# change "--" to missing
+snp.dat[,c('rs1800562', 'rs1799945', 'rs855791')][snp.dat[,c('rs1800562', 'rs1799945', 'rs855791')] == "--"] <- NA
+summary(snp.dat)
+
+# convert from factor to character
+# Source: https://stackoverflow.com/questions/2851015/convert-data-frame-columns-from-factors-to-characters
+snp.dat[] <- lapply(snp.dat, as.character)
+summary(snp.dat)
+table(snp.dat$rs1799945)
+head(snp.dat)
+
+```
+
+
+```{r}
+
+# Combine snp data with data to export, sub.dat
+class(snp.dat$Onc_ID)
+sub.dat.merge = merge(sub.dat, snp.dat, 
+                  by.x="OncoArray_ONC_ID", by.y="Onc_ID",
+                  all.x=T)
+
+dim(sub.dat.merge)
+dim(sub.dat)
+dim(snp.dat)
+
+table(sub.dat.merge$rs1799945)
+
+sub.dat = sub.dat.merge
+
+```
+
+
+```{r}
+
+save(all.dat, sub.dat, nail.names2, iron.names2, serum.names2, supp.vars.baseline, eclampsia.names2,
+     file="updated-data-iron.RData") # sub.dat is subset, all.dat is total data
+
+```
+

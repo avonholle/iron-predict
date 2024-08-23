@@ -1,0 +1,840 @@
+---
+title: "Section 2: Prepare data to characterize the association between a set of iron-related predictors and baseline iron status."
+output:
+  pdf_document:
+    includes:
+      in_header: ../preamble-latex-nobookdown.tex
+    number_sections: yes
+    toc: no
+    highlight: tango
+  html_document:
+    theme: united
+    toc: no
+editor_options:
+  chunk_output_type: console
+header-includes:
+ \usepackage{float}
+---
+
+<!-- Source: U:\projects\Iron-nails-serum\sections\section6.Rmd  -->
+<!-- Source: /post/an-introduction-to-the-harrell-verse-predictive-modeling-using-the-hmisc-and-rms-packages/ -->
+
+```{r setup3, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      results = 'markup',
+                      warning = F,
+                      fig.pos = 'H',
+                      results="hide")
+
+#runif(1, 0, 10^8)
+set.seed(74268794)
+
+```
+
+
+```{r, include=F}
+# bring in packages
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+library(dplyr)
+library(tidyr)
+library(plyr)
+library(expss) # https://cran.r-project.org/web/packages/expss/vignettes/labels-support.html
+# NOTE: expss seems to mask a a lot of functions from other packages listed here.
+library(cowplot)
+library(tidyverse)
+library(rms)
+
+require(labelled)
+require(splines)
+
+
+```
+
+
+```{r}
+
+# source: data-handling-cch.Rmd
+
+load(file="../sections/updated-data-iron.RData") # sub.dat is subset, all.dat is total data
+
+dim(all.dat)
+with(all.dat, table(menop.status.f, event))
+table(all.dat$menop.status)
+
+nail.names2
+iron.names2
+serum.names2
+
+table(sub.dat$subcohort.nocases)
+attributes(sub.dat$MC236)
+attributes(sub.dat$MC234)
+attributes(sub.dat$TQ75)
+table(sub.dat$HR57)
+
+with(sub.dat, table(MC236, MC234, useNA = "always"))
+
+attributes(sub.dat$na_all_dt_ca)
+attributes(sub.dat$dh_vm_yn4_itm14)
+
+sub.dat.orig = sub.dat
+table(sub.dat.orig$MC116, useNA = "always")
+
+table(sub.dat$HZ_RX_Chol_Statin_Current)
+table(sub.dat$HZ_RX_NSAID_Aspirin_Current_Reg)
+
+names(sub.dat)[grepl("menop", names(sub.dat))]
+names(sub.dat)[grepl("mena", names(sub.dat))]
+
+names(sub.dat)[grepl("DR224_PCOS_DxAgeImp", names(sub.dat))]
+
+
+dim(sub.dat)
+
+```
+
+
+```{r}
+# create groups of variable names
+
+# similar to comparison in U:\projects\Iron-status\sections\section7.Rmd
+
+extra = c('PA_RX_Iron_24Hr',
+              'RPA_RX_Iron_24Hr',
+              'SCL_PA_RX_Iron_24Hr',
+              'SCL_RPA_RX_Iron_24Hr')#,
+          #'dh_vm_yn_itm16')
+
+# set up the outcome vars
+# DH: diet history and nutrient analysis, baseline
+# LL: lifestyle and quality of life, first follow-up
+# TQ: quality of life, second follow-up
+iron.supp.vars = c(
+              'TQ75',
+              'TQ75a',
+              'TQ75b',
+              'TQ75c',
+              'LL94',
+              'LL94a',
+              'LL94b',
+              'LL94c',
+              supp.vars.baseline)
+
+ida.vars = c('MC116', 'MC117')
+
+hemo.vars = c("MC114", "MC115")
+
+lmp.vars = c('HR_DiffLMPintv')
+# HR_LMP	CALC: HR_LMP. Age at Last Menstrual Period (LMP) [HR21 thru HR49,PG_MaxAgePregEnd]
+# HR_LMPExact	CALC: HR_LMPExact. Age at Last Menstrual Period rounded to the 1/10th (LMP) [HR21 thru HR49,PG_MaxAgePregEnd]
+# HZ_HR_LMP	CALC: HZ_HR_LMP. Harmonized age at Last Menstrual Period (LMP) [TH124-TH131,TH163-TH164,HR_LMPBH]
+# HZ_HR_LMPExact	CALC: HZ_HR_LMP. Harmonized age at Last Menstrual Period (LMP) [TH124-TH131,TH163-TH164,HR_LMPBH]
+# HR_DiffLMPintv	CALC: HR_DiffLMPintv. years since LMP at interview [HRAgeNow - HR_LMP]
+
+supp.vars2 = supp.vars.baseline; supp.vars2
+
+```
+
+
+```{r, include=F}
+
+# look at original variables for IDA
+
+attributes(sub.dat$MC117)
+table(as_factor(sub.dat$MC116))
+
+with(sub.dat, summary(MC117))
+miss.age = with(sub.dat, ifelse(is.na(MC117), 1, 0))
+
+table(miss.age, as_factor(zap_missing(sub.dat$MC116)))
+# there are 20 of the 611 with IDA missing age. just set them to missing (around 3%)
+table(sub.dat$MC116, useNA = "always")
+
+# Look at original variables for blood donation
+table(as_factor(sub.dat$MC234), useNA = "always") # MC234 (Main) MC218 (Vanguard). R has ever given blood
+table(as_factor(sub.dat$MC236), useNA = "always") # MC236 (Main) MC220 (Vanguard). Given blood in past 12 mos
+
+with(sub.dat, table(zap_missing(MC234), zap_missing(MC236), useNA = "always")) # mc236 must be a skip question so missing corresponds to nos
+
+# can use MC236 instead of MC234
+
+```
+
+
+```{r}
+
+# rescale the numeric variables so they show up on the figure
+table(sub.dat$HR57)
+
+qrts = c(0, 0.25, 0.5, 0.75, 1)
+table(sub.dat$MC116, useNA = "always") # check
+
+sub.dat = within(sub.dat, {
+  # AL_DrinksPWC_qrt = cut(AL_DrinksPWC, quantile(AL_DrinksPWC, qrts,
+  #                                           include.lowest=T, na.rm=T))  
+  AL_DrinksPWC_4 = AL_DrinksPWC*4
+  PH2_TotHrsPerWeek_4 = PH2_TotHrsPerWeek*4
+  na_all_dt_ca_100 = na_all_dt_ca/100
+  na_all_sd_ca_100 = na_all_sd_ca/100
+  na_sup_ca_100 = na_sup_ca/100
+  FG_all_pf_meat_8 = (FG_all_pf_meat)*7 # meat is 1 oz per day. rescale for 1 ounce per week
+  na_all_dt_fe_1000 = na_all_dt_fe/1000
+  na_all_sd_fe_1000 = na_all_sd_fe/1000
+  na_sup_fe_1000 = na_sup_fe/1000
+  HR_DiffLMPintv_12 = HR_DiffLMPintv*12
+  HR_HRT_Years_12 = HR_HRT_Years*12
+  rls = rls
+  
+  
+  MC116 = ifelse(is.na(MC116), NA,
+                 ifelse(MC116 %in% c(1,3), 1, 0)) # Include 1 = (1=yes and 3=borderline) for a binary variable 0=(2=No)
+  
+  HR57.2 = ifelse(is.na(HR57) | HR57 %in% c(6), NA,
+                ifelse(HR57 %in% c(1,2), 1, 0)) # selected lowest number days allowing n>150 for smallest group
+  # see categories below
+  
+  
+ rs1800562.a = ifelse(rs1800562 %in% c('AA', 'AG'), 1, 0)
+ rs1799945.g = ifelse(rs1799945 %in% c('CG', 'GG'), 1, 0)
+ rs855791.g  = ifelse(rs855791 %in% c('AG', 'GG'), 1, 0)
+})
+
+lapply(sub.dat[c('rs1800562', 'rs1799945', 'rs855791', 'HR57.2')], table)
+table(sub.dat$HR57)
+
+# HR57x format for HR57 variable (HR57. # days between periods)
+#              .|               .|.
+# |              .D|              .D|.D) Don't know
+# |              .M|              .M|.M) Missing
+# |              .R|              .R|.R) Refused
+# |               1|               1|1) Less than 21 days, and fairly
+# regular|
+# |               2|               2|2) 21 to 24 days, and fairly regular
+# |               3|               3|3) 25 to 34 days, and fairly regular
+# |               4|               4|4) 35 to 60 days, and fairly regular
+# |               5|               5|5) More than 2 months
+# |               6|               6|6) Too irregular to say
+# |               7|               7|7) Did not have periods
+# |               8|               8|8) Continues bleeding
+# |              96|              96|96) Did not have periods
+
+# table(sub.dat$MC116) # check
+# NOTE: some of the supplement vars ahve weird distributions -- CA is one of them.
+#hist(sub.dat$na_all_dt_fe_1000)
+#hist(sub.dat$na_all_dt_ca_1000)
+#hist(sub.dat$na_sup_ca)
+#summary(sub.dat$na_all_dt_ca)
+
+# make binary variables as factors
+#levels(factor(sub.dat$dh_vm_yn_itm16))
+#class(sub.dat$dh_vm_yn_itm16)
+class(sub.dat$MC234)
+table(sub.dat$MC234)
+table(sub.dat$HR_HRTcurrent)
+
+sub.dat = within(sub.dat, {
+  #dh_vm_yn_itm16.f = factor(dh_vm_yn_itm16)
+  dh_vm_yn4_itm16.f = factor(dh_vm_yn4_itm16r)
+  MC234.f = ifelse(as.character(MC234)=="1", 1, 
+                   ifelse(as.character(MC234)=="0", 0, NA))
+  MC236.f = factor(MC236)
+  MC116.f =  ifelse(as.character(MC116)=="1", 1, 
+                   ifelse(as.character(MC116)=="0", 0, NA))
+  HR_Menopause.f = factor(HR_Menopause)
+  HR_HRTcurrent.f = ifelse(as.character(HR_HRTcurrent) == "1", 1,
+                           ifelse(as.character(HR_HRTcurrent) == "0", 0,
+                                               NA))
+#  dh_vm_yn_itm14.f  = factor(dh_vm_yn_itm14)
+  dh_vm_yn4_itm14.f  = factor(dh_vm_yn4_itm14r)
+})
+
+class(sub.dat$MC116.f)
+table(sub.dat$MC116.f)
+class(sub.dat$MC234.f)
+table(sub.dat$MC234.f, useNA = "always")
+table(sub.dat$MC234)
+class(sub.dat$MC236.f)
+table(sub.dat$HR_HRTcurrent.f)
+# Re-do labels so they fit better in plots
+
+sub.dat = apply_labels(sub.dat,
+                       AL_DrinksPWC_4="Alcohol (drinks per month)",
+                       PH2_TotHrsPerWeek_4="Exercise hours per month",
+                       FG_all_pf_meat_8="Meat (1 oz. eq per week)",
+                       FG_all_pf_meat="Meat (1 oz. per day)",
+                       
+                       na_all_dt_fe="Dietary iron, mg",
+                       na_all_sd_fe="Dietary + supplement iron, mg",
+                       na_all_dt_fe_1000="Dietary iron, g",
+                       na_all_sd_fe_1000="Dietary and supplement iron, g",
+                       na_sup_fe_1000 = "Supplement iron, g",
+                       
+                       na_all_dt_ca_100="Dietary calcium, dg",
+                       na_all_sd_ca_100="Dietary + supplement calcium, dg",
+
+                       HR_DiffLMPintv="Years since LMP at interview",
+                       HR_HRT_Years="Estrogen or progesterone use (years)",
+                       HR_DiffLMPintv_12="Months since LMP at interview",
+                       HR_HRT_Years_12="Estrogen or progesterone use (months)",
+                       na_sup_ca_100 = 'Calcium supplements, dg',
+                       na_sup_fe = 'Iron supplements, mg',
+                                     "na.all.dt.ca",
+              
+                       na_all_dt_ca = "Dietary calcium, mg",
+                       na_all_sd_ca = "Dietary + supplement calcium, mg",
+                       na_sup_ca = 'Calcium supplements, mg',
+                       
+#                       dh_vm_yn_itm16 = "Iron supplements, y/n",
+                       dh_vm_yn4_itm16 = "Iron supplements 4+/wk, y/n",
+                       MC234  = "Ever given blood",
+                       MC236 = "Given blood in past 12 mos",
+                       MC116 = "Ever dx with IDA",
+                       HR_Menopause = "Postmenopausal at entry, y/n",
+                       HR_HRTcurrent = "Current HRT use",
+#                       dh_vm_yn_itm14 = "Calcium supplements, y/n",
+                       dh_vm_yn4_itm14 = "Calcium 4+/wk, y/n",
+                       
+#                       dh_vm_yn_itm16.f = "Iron supplements, y/n",
+                       dh_vm_yn4_itm16.f = "Iron supplements 4+/wk, y/n",
+                       MC234.f  = "Ever given blood",
+                       MC236.f = "Given blood in past 12 mos",
+                       MC116.f = "Ever dx with IDA",
+                       HR_Menopause.f = "Menopause status at entry, y/n",
+                       HR_HRTcurrent.f = "Current HRT use",
+#                       dh_vm_yn_itm14.f = "Calcium supplements, y/n",
+                       dh_vm_yn4_itm14.f = "Calcium 4+/wk, y/n",
+                       bmi = "BMI kg/m2",
+
+                       HZ_RX_NSAID_Aspirin_Current_Reg = 'Currently use aspirin regularly (1+/wk, 3+ mos)',
+                       HZ_RX_Chol_Statin_Current = 'Currently use statins',
+                       rs1800562.a = 'rs1800562, A allele',
+                       rs1799945.g = 'rs1799945, G allele', 
+                       rs855791.g = 'rs855791, G allele',
+
+                       rls = "Reproductive life span (years)",
+                       HR57.2 = "Days between periods (<25 days)",
+
+                       totpreg.mo2 = "Years pregnant and breastfeeding",
+                       ibd.rev = 'Ever irritable bowel disease at entry, y/n',
+                       preeclampsia = "Ever preeclampsia at entry, y/n",
+                       pcos.rev = "Ever PCOS at entry, y/n",
+                       polyps.rev = "Ever had colon/rectum polyps",
+                       blood.don.12mos = "Donate blood in past 12 months, y/n")
+
+
+
+#hist(sub.dat$na_all_dt_ca_1000)
+attributes(sub.dat$AL_DrinksPWC_4)
+attributes(sub.dat$HR_DiffLMPintv_12)
+attributes(sub.dat$HR_DiffLMPintv)
+
+
+```
+
+
+```{r}
+
+other.vars = c('na_all_dt_fe',  
+               'FG_all_pf_meat',
+                'na_all_sd_fe',
+                'HR_Menopause',
+                'AL_DrinksPWC',
+                'PH2_TotHrsPerWeek',
+                'HR_HRT_Years', 'HR_HRTcurrent',
+                'dh_vm_yn4_itm14',
+#               'na_all_dt_ca_100',
+               'na_sup_ca_100') # list from data-handling-cch.Rmd in SAP.Rmd
+
+attributes(sub.dat$FG_all_pf_meat)
+
+# select the predictors here
+other.vars.scaled =
+  c('na_all_dt_fe',  
+    'FG_all_pf_meat_8',
+    'na_all_sd_fe',
+    'na_sup_ca_100',
+    'HR_Menopause.f',
+    'AL_DrinksPWC_4',
+    'PH2_TotHrsPerWeek_4',
+    #'HR_HRT_Years_12', 
+    'HR_HRTcurrent.f',
+#    'dh_vm_yn_itm14.f', 
+    'dh_vm_yn4_itm14.f', 
+    'na_sup_fe_1000',
+    'na_all_dt_ca_100', 
+    'na_all_sd_ca_100', 
+    'na_all_dt_fe_1000', 
+    'na_all_sd_fe_1000', 
+    "na_all_dt_ca",
+    'na_sup_ca',
+    'na_all_sd_ca',
+    'na_all_dt_ca',
+#    'na_sup_ca_100',  
+#    'na_sup_fe',
+#    'dh_vm_yn_itm16.f',
+    'dh_vm_yn4_itm16.f') # list from data-handling-cch.Rmd in SAP.Rmd
+
+
+# DEFINE the variables to be used in the analysis
+# get labels for all the covariates
+cov.vars = c("bmi",
+             "MC234.f",
+             "MC236.f",
+             "MC116.f",
+             'HR_DiffLMPintv',
+             'FG_all_pf_meat',
+             other.vars.scaled,
+             'HZ_RX_NSAID_Aspirin_Current_Reg',
+             'HZ_RX_Chol_Statin_Current',
+             'rs1800562.a',
+             'rs1799945.g',
+             'rs855791.g', 
+             'rls',
+             'HR57.2',
+             'HR_HRT_Years',
+             'totpreg.mo2', # Number of pregnancies that are not miscarriages and breastfeeeding (months/12)
+             'ibd.rev', # people who have polyps at or before baseline = 1
+             'preeclampsia', 
+             'pcos.rev',
+             'polyps.rev',
+             'na_all_dt_fe',
+             'na_sup_fe',
+             'blood.don.12mos' 
+)
+
+table(sub.dat$HZ_RX_Chol_Statin_Current)
+
+cov.vars[!(cov.vars %in% names(sub.dat))]
+
+labels.dat = sapply(sub.dat[cov.vars], 
+       function(x) attributes(x)$label)
+
+labels.df = data.frame(labels=labels.dat, varname=names(labels.dat))
+labels.df
+
+```
+
+```{r}
+
+# categorize group labels
+
+labels.df = within(labels.df, {
+  category = ifelse(varname %in% c(#"dh_vm_yn_itm16",
+                                   "dh_vm_yn4_itm16",
+                                   #"dh_vm_yn_itm16.f",
+                                   "dh_vm_yn4_itm16.f",
+                                   "na_all_dt_fe",
+                                   'na_sup_fe',
+                                   "na_all_sd_fe",
+                                   "na_all_dt_fe_1000",
+                                   "na_all_sd_fe_1000",
+                                   'na_sup_fe_1000',
+                                   "FG_all_pf_meat",
+                                   "FG_all_pf_meat_8"), "Diet and supplements, Iron",
+                    ifelse(varname %in% c("MC234", "MC236", "MC116",
+                                          "MC234.f", "MC236.f", "MC116.f",
+                                          'blood.don.12mos'), "Blood donation and anemia",
+                           ifelse(varname %in% c("HR_DiffLMPintv", "HR_HRT_Years", 
+                                                 "HR_HRTcurrent", "HR_HRTcurrent.f",
+                                                 "HR_Menopause", "HR_Menopause.f",
+                                                 "HR_DiffLMPintv_12", "HR_HRT_Years_12", 
+                                                 "HR_DiffLMPintv", "HR_HRT_Years", 
+                                                 'rls', 'HR57.2'), "Menopause and HRT",
+                                  ifelse(varname %in% c("AL_DrinksPWC","AL_DrinksPWC_4", "PH2_TotHrsPerWeek", "PH2_TotHrsPerWeek_4",
+                                                        'bmi'), "Alcohol and Exercise",
+                                         ifelse(varname %in% c("dh_vm_yn4_itm14", 
+                                                               "dh_vm_yn4_itm14.f",
+                                                               "dh_vm_yn_itm14", 
+                                                               "dh_vm_yn_itm14.f",
+                                                               "na_sup_ca",
+                                                               "na_all_dt_ca", 
+                                                               "na_all_sd_ca_100",
+                                                               "na_all_sd_ca", 
+                                                               "na_all_dt_ca_100",
+                                                               "na_sup_ca_100"),
+                                                "Diet and supplements, Calcium", ifelse(varname %in% c("HZ_RX_NSAID_Aspirin_Current_Reg",
+                                                                                                       "HZ_RX_Chol_Statin_Current"), 
+                                                                                        "Drugs",
+                                                                                        ifelse(varname %in% c('rs1800562.a', 'rs1799945.g', 'rs855791.g'), "Genetic variants",
+                                                                                               ifelse(varname %in% c('totpreg.mo2', 'ibd.rev', 'preeclampsia', 'pcos.rev', 'polyps.rev'),
+                                                                                                      'Disease and pregnancy', NA ))))))))
+})
+
+labels.df
+
+```
+
+
+```{r}
+# NOTE: you lose the haven variable labels when you subset
+
+dim(sub.dat)
+
+# select sample of subcohort, no cases
+sub.datc = sub.dat[sub.dat$subcohort==1,]
+dim(sub.datc)
+
+table(sub.dat$menop.status)
+table(sub.datc$menop.status)
+
+```
+
+<!-- Source: U:\projects\Iron-nails-serum\sections-nocases\section5-pca.Rmd -->
+
+```{r}
+
+# PCA code
+
+# Source: https://raw.githubusercontent.com/WinVector/Examples/master/PCR/XonlyPCA.Rmd
+extractProjection <- function(ndim,princ) {
+  # pull off the rotation.  
+  proj <- princ$rotation[,1:ndim] 
+  # sign was arbitrary, so flip in convenient form
+  for(i in seq_len(ndim)) {
+    si <- sign(mean(proj[,i]))
+    if(si!=0) {
+      proj[,i] <- proj[,i]*si
+    }
+  }
+  proj
+}
+
+```
+
+```{r}
+
+# get first PC
+
+iron.vars = c("UMN_Iron_Baseline_FE", "UMN_Iron_Baseline_FERTN", "UMN_Iron_Baseline_FESAT")
+iron.vars.scl = c("UMN_Iron_SCL_FE", "UMN_Iron_SCL_FERTN", "UMN_Iron_SCL_FESAT")
+
+# Source: http://www.win-vector.com/blog/2016/05/pcr_part1_xonly/
+cc = sub.datc[complete.cases(sub.datc[iron.vars]),]$PSID
+length(cc)
+
+cc.scl = sub.datc[complete.cases(sub.datc[iron.vars.scl]),]$PSID
+length(cc.scl)
+#head(cc)
+
+m.df = as.matrix(sub.datc[which(sub.datc$PSID %in% cc), iron.vars])# use complete cases
+#head(m.df)
+log.m.df = log(m.df)
+
+m.df.scl = as.matrix(sub.datc[which(sub.datc$PSID %in% cc.scl), iron.vars.scl])# use complete cases
+#head(m.df)
+log.m.df.scl = log(m.df.scl)
+head(log.m.df.scl)
+
+pca = prcomp(m.df, center=T, scale.=T) # scale variables because units are not same across 3 
+pca.scl = prcomp(m.df.scl, center=T, scale.=T) # scale variables because units are not same across 3 measures.
+
+pca$rotation # loadings, source: https://jmmaronge.github.io/post/introduction-doing-prcomp-more-efficiently/
+pca.scl$rotation
+
+# signs are arbitrary on PCA, so instead of calling predict we pull out
+# (and alter) the projection by hand
+
+pc.dat <-
+  as.data.frame(scale(m.df) %*% extractProjection(3,pca),
+                                 stringsAsFactors = FALSE)
+pc.dat.scl <-
+  as.data.frame(scale(m.df.scl) %*% extractProjection(3, pca.scl),
+                                 stringsAsFactors = FALSE)
+
+
+loading.matrix = extractProjection(3,pca)
+loading.matrix
+
+# first pc for first individual
+head(scale(m.df))
+# -0.14*0.37 + 1.56*0.68 + -0.24*-0.63
+head(pc.dat)
+names(pc.dat.scl) = c("PC1.scl", "PC2.scl", "PC3.scl")
+head(pc.dat.scl)
+
+sub.datc.baseline = cbind(pc.dat, PSID=sub.datc[which(sub.datc$PSID %in% cc),"PSID"])
+names(sub.datc.baseline)
+
+sub.datc.scl = cbind(pc.dat.scl, PSID=sub.datc[which(sub.datc$PSID %in% cc.scl), "PSID"])
+names(sub.datc.scl)
+
+# combine baseline and t2 data sets
+sub.datc.combo = merge(sub.datc, sub.datc.baseline, by="PSID")
+sub.datc.combo = merge(sub.datc.combo, sub.datc.scl, by="PSID", all.x=T)
+summary(sub.datc.combo$PC1.scl)
+dim(sub.datc.combo)
+
+with(sub.datc.combo, cor(PC1, fe)) # check
+with(sub.datc.combo, cor(PC1.scl, UMN_Iron_SCL_FE, use="complete.obs")) # check
+
+pc.info = sub.datc.combo[c("PSID", "PC1", "PC1.scl")]
+
+save(pca, loading.matrix, pc.info, file="pca-info.RData")
+
+dim(sub.datc)
+dim(sub.datc.combo)
+# now data frame has people with t1 and t2 measures
+```
+
+```{r}
+dim(sub.datc)
+sub.datc = merge(sub.datc, pc.info, by="PSID", all.x=T)
+dim(sub.datc)
+table(sub.datc$menop.status)
+```
+
+
+```{r}
+
+# similar to comparison in U:\projects\Iron-status\sections\section7.Rmd
+
+extra = c('PA_RX_Iron_24Hr',
+              'RPA_RX_Iron_24Hr',
+              'SCL_PA_RX_Iron_24Hr',
+              'SCL_RPA_RX_Iron_24Hr')#,
+          #'dh_vm_yn_itm16')
+
+# set up the outcome vars
+iron.supp.vars = c(
+              'TQ75',
+              'TQ75a',
+              'TQ75b',
+              'TQ75c',
+              'LL94',
+              'LL94a',
+              'LL94b',
+              'LL94c')
+
+ida.vars = c('MC116', 'MC117')
+
+hemo.vars = c("MC114", "MC115")
+
+```
+
+
+# Association between iron supplements and iron variables
+
+## Baseline
+
+
+```{r}
+
+#### Outlier information
+
+extreme.id = sub.datc[which(sub.datc$DC_Baseline_Toenail_Fe==max(sub.datc$DC_Baseline_Toenail_Fe, na.rm=T)),]$PSID
+extreme.id
+
+sub.datc[sub.datc$PSID %in% c(extreme.id),]$DC_Baseline_Toenail_Fe
+```
+
+
+
+```{r}
+
+# adapated from U:\projects\Iron-status\sections\section7.Rmd
+
+# make a function of the previous analyses repeating over covariates.
+
+get.coefs = function(cov,outcome) {
+  
+  # dat=sub.datc; outcome = "UMN_Iron_Baseline_FE"; cov='HR_DiffLMPintv'; #cov="TQ75" # debug
+  sub.datc$y= sub.datc[,outcome]
+  sub.datc$x = sub.datc[,cov]
+  
+# Linear regression model =========================
+  
+fmla = paste( "y", '~ x')
+
+if (cov %in% c('HR_DiffLMPintv','HR_DiffLMPintv_12')) {
+  model = lm(fmla, data=sub.datc[sub.datc$menop.status==1,]) # restrict years since lmp to women who are postmenop at baseline
+} else {
+  model = lm(fmla, data=sub.datc)
+}
+
+c = coef(summary(model))
+n = length(model$residuals); n
+
+
+# put all info in data frame to export
+df.info = data.frame(cov = paste(cov), 
+                     outcome = paste(outcome),
+                     coef = c,
+                     varname = rownames(c),
+                     n = n,
+                     stringsAsFactors=FALSE)
+
+df.info
+return(df.info)
+
+}
+
+get.coefs(cov="TQ75", outcome="UMN_Iron_Baseline_FE")
+
+```
+
+
+```{r}
+
+# iron supplement variables ===========================================
+# LL94	LL94. Taken Iron, past 12 months
+# LL94a	LL94a. Iron, frequency
+# LL94b	LL94b. Iron, total years
+# LL94c	LL94c. Iron, dose
+# TQ75	Took iron past 12 mos
+# TQ75a	Freq took iron past 12 mos
+# TQ75b	Yrs taken iron
+# TQ75c	Amt of iron taken
+
+# Blood donation ===========================================
+# MC	MC234	MC234 (Main) MC218 (Vanguard). R has ever given blood
+# MC	MC235no	MC235 (Main) MC219 (Vanguard). # of times/gallons blood donated
+# MC	MC235un	MC235 (Main) MC219 (Vanguard). unit (times/gallons) blood donated
+# MC	MC236	MC236 (Main) MC220 (Vanguard). Given blood in past 12 mos
+
+# IDA ===========================================
+# MC	MC116	MC116. Ever diagnosed with iron deficiency anemia
+# MC	MC117	MC117. Age first diagnosed with iron deficiency anemia
+
+# LMP ===========================================
+# HR_LMP	CALC: HR_LMP. Age at Last Menstrual Period (LMP) [HR21 thru HR49,PG_MaxAgePregEnd]
+# HR_LMPExact	CALC: HR_LMPExact. Age at Last Menstrual Period rounded to the 1/10th (LMP) [HR21 thru HR49,PG_MaxAgePregEnd]
+# HZ_HR_LMP	CALC: HZ_HR_LMP. Harmonized age at Last Menstrual Period (LMP) [TH124-TH131,TH163-TH164,HR_LMPBH]
+# HZ_HR_LMPExact	CALC: HZ_HR_LMP. Harmonized age at Last Menstrual Period (LMP) [TH124-TH131,TH163-TH164,HR_LMPBH]
+# HR_DiffLMPintv	CALC: HR_DiffLMPintv. years since LMP at interview [HRAgeNow - HR_LMP]
+
+
+#supp.vars = c("LL94", "LL94a", "LL94b", "LL94c", "TQ75", "TQ75a", "TQ75b", "TQ75c")
+#supp.vars2 = c("LL94","TQ75") # the detailed variables do not have enough info to use for the nail measures
+summary(sub.datc[supp.vars2])
+
+iron.vars = c("UMN_Iron_Baseline_FE", "UMN_Iron_Baseline_FERTN", "UMN_Iron_Baseline_FESAT", "PC1")
+new.iron.vars = c("Serum.iron", "Serum.ferritin", "Serum.fesat", "PC1")
+colnames(sub.datc)[which(colnames(sub.datc) %in% iron.vars)] = new.iron.vars
+summary(sub.datc[new.iron.vars])
+
+# Problem with haven and subsetting: https://github.com/tidyverse/haven/issues/392
+# Get labels back
+sub.datc <- sub.datc %>% copy_labels_from(sub.dat.orig) # Source: http://larmarange.github.io/labelled/reference/copy_labels.html
+```
+
+
+```{r, results='markup', eval=F, include=F}
+
+d = describe(sub.datc[,c(cov.vars, new.iron.vars)])
+d
+
+cov.vars[!(cov.vars %in% names(sub.datc))]
+
+```
+
+```{r, fig.width=8, fig.height=8, eval=F, include=F}
+
+p = plot(d)
+p
+attributes(sub.datc$na_sup_ca)
+
+```
+
+\blandscape
+
+```{r, fig.width=10, fig.height=8}
+# Many of the dietary history (DH) variables are missing. Exclude from analyses along with MC236, indicates if they donated blood in last 12 months.
+par(mfrow = c(1,2))
+na_patterns <- Hmisc::naclus(sub.datc[,c(cov.vars, new.iron.vars)])
+Hmisc::naplot(na_patterns, 'na per var')
+plot(na_patterns)
+
+```
+
+\elandscape
+
+```{r, eval=F}
+
+# for some reason this chunk not working
+
+# why do certain variables have > 0.3 missing?
+
+miss.vars = c("dh_vm_yn4_itm14",
+                 "MC236",
+                # "dh_vm_yn_itm16",
+                 "dh_vm_yn4_itm16")
+
+vals = sapply(sub.datc[miss.vars], 
+       function(x) {table(as_factor(x), useNA="always")} )
+
+names = sapply(sub.datc[miss.vars], 
+       function(x) {attributes(x)$label} )
+names
+
+names(vals) = names
+
+vals
+```
+
+```{r}
+
+miss.vars.f = c(#"dh_vm_yn_itm14.f",
+                "dh_vm_yn4_itm14.f",
+                 "MC236.f",
+                 #"dh_vm_yn_itm16.f",
+                 "dh_vm_yn4_itm16.f")
+# take out dietary history (not reliable) and donated blood in last 12 months.
+# to do: go back and see how I can use MC236 for manuscript (with MC234)
+cov.vars
+
+# take variables with large number of missing out of variable list
+cov.vars.new = cov.vars[!(cov.vars %in% miss.vars.f)]
+
+cov.vars.new
+s2.dat = sub.datc[c(new.iron.vars, cov.vars.new, 'menop.status', 'baseline.age', 'PSID')]
+summary(s2.dat)  
+table(s2.dat$menop.status)
+class(s2.dat$menop.status)
+s2.dat = remove_labels(s2.dat)
+sapply(s2.dat, class) # source: https://cran.r-project.org/web/packages/labelled/labelled.pdf
+summary(s2.dat)
+
+save(s2.dat, cov.vars.new, labels.df, file="s2.RData")
+save(s2.dat, cov.vars.new, labels.df, file="W:/projects/iron-aim4/sections/s2.RData") # save to Wine server for the imputation work
+
+```
+
+
+```{r}
+
+# iron supplement variables ===========================================
+# LL94	LL94. Taken Iron, past 12 months
+# LL94a	LL94a. Iron, frequency
+# LL94b	LL94b. Iron, total years
+# LL94c	LL94c. Iron, dose
+# TQ75	Took iron past 12 mos
+# TQ75a	Freq took iron past 12 mos
+# TQ75b	Yrs taken iron
+# TQ75c	Amt of iron taken
+
+# Blood donation ===========================================
+# MC	MC234	MC234 (Main) MC218 (Vanguard). R has ever given blood
+# MC	MC235no	MC235 (Main) MC219 (Vanguard). # of times/gallons blood donated
+# MC	MC235un	MC235 (Main) MC219 (Vanguard). unit (times/gallons) blood donated
+# MC	MC236	MC236 (Main) MC220 (Vanguard). Given blood in past 12 mos
+
+# IDA ===========================================
+# MC	MC116	MC116. Ever diagnosed with iron deficiency anemia
+# MC	MC117	MC117. Age first diagnosed with iron deficiency anemia
+
+# LMP ===========================================
+# HR_LMP	CALC: HR_LMP. Age at Last Menstrual Period (LMP) [HR21 thru HR49,PG_MaxAgePregEnd]
+# HR_LMPExact	CALC: HR_LMPExact. Age at Last Menstrual Period rounded to the 1/10th (LMP) [HR21 thru HR49,PG_MaxAgePregEnd]
+# HZ_HR_LMP	CALC: HZ_HR_LMP. Harmonized age at Last Menstrual Period (LMP) [TH124-TH131,TH163-TH164,HR_LMPBH]
+# HZ_HR_LMPExact	CALC: HZ_HR_LMP. Harmonized age at Last Menstrual Period (LMP) [TH124-TH131,TH163-TH164,HR_LMPBH]
+# HR_DiffLMPintv	CALC: HR_DiffLMPintv. years since LMP at interview [HRAgeNow - HR_LMP]
+
+
+#supp.vars = c("LL94", "LL94a", "LL94b", "LL94c", "TQ75", "TQ75a", "TQ75b", "TQ75c")
+#supp.vars2 = c("LL94","TQ75") # the detailed variables do not have enough info to use for the nail measures
+```
+
+

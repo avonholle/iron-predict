@@ -1,0 +1,1070 @@
+--- 
+title: "Predictive models for iron status: tables and figures"
+author: "Ann Von Holle"
+date: "`r Sys.Date()`"
+output:
+  pdf_document:
+    includes:
+      in_header: ../preamble-latex-nobookdown.tex
+    number_sections: yes
+    toc: no
+    highlight: tango
+  html_document:
+    theme: united
+    toc: no
+urlcolor: blue
+linkcolor: blue
+citecolor: blue
+bibliography: ../iron.bib
+link-citations: yes
+geometry: margin=1cm
+always_allow_html: true
+description: "Analysis summary for manuscript titled, 'Predictive models for iron status'"
+editor_options: 
+  chunk_output_type: console
+---
+
+
+<!-- NOTES:  -->
+<!-- 1) missing information in missing.Rmd -->
+
+```{r, include=FALSE}
+# bibliography: [../../Iron-status/bib/iron-lit.bib]
+
+# Change to eval=T if you want to re-run w/ new data. Note that having this set to T, the report won't print if there are image files inserted into the bookdown document, but all the .Rmd child files will run. For example, the .png files from section2.Rmd will not print because this bookdown report will be looking for the .png files in the child scripts located in a different folder than the bookdown report where this script lives. For new data, need to run with eval=T to re-run all R scripts then re-run with eval=F to create report.
+knitr::opts_chunk$set(echo = F, 
+                      eval = F, # if need to re-run change to T
+#                      fig.width=10,
+#                      fig.height=5,
+#                      fig.cap=T,
+                      message=F,
+                      float=F,
+                      fig.pos="H",
+                      results = 'hide', # hide all results
+                      warning = F)
+
+```
+
+
+```{r, include=F, eval=T}
+
+require(knitr)
+require(kableExtra)
+library(cowplot)
+
+require(haven)
+require(data.table)
+require(ggplot2)
+library(dplyr)
+library(tidyr)
+library(plyr)
+#library(expss) # https://cran.r-project.org/web/packages/expss/vignettes/labels-support.html
+# NOTE: expss seems to mask a a lot of functions from other packages listed here.
+
+library(splines)
+library(sjlabelled)
+require(dplyr)
+require(tidyverse)
+
+# numbers from section2-rms-pre.Rmd and section2-rms-post.Rmd
+#boot.set = 100
+#impute.set = 100
+
+
+# https://stackoverflow.com/questions/53678412/make-na-values-in-table-just-blank-cells-when-using-cell-spec-in-kableextra
+options(knitr.kable.NA = '')
+
+```
+
+```{r, child="../sections/data-handling-cch.Rmd", eval=F}
+```
+
+```{r, child="../sections/section2-dataprep.Rmd", eval=F}
+```
+
+```{r, child="../sections/missing.Rmd", eval=F}
+```
+
+```{r, child="../sections/section1-subcohort.Rmd", eval=F}
+```
+
+
+```{r, child="../sections/section2-pre.Rmd", eval=F}
+```
+
+```{r, child="../sections/section2-post.Rmd", eval=F}
+```
+
+```{r, child="../sections/section2-rms-pre.Rmd", eval=F}
+```
+
+```{r, child="../sections/section2-rms-post.Rmd", eval=F}
+```
+
+
+```{r, eval=T}
+
+# Load data from programs to be run in subsequent chunks. 
+# NOTE: if you need to get updated numbers need to run this twice to get updated numbers for tables here.
+
+# Complete case data
+# =========================================
+
+load(file="../sections/section2-dat-pre.RData") # rev.dat2, supp.plot, hr.plot, cat.plot from section2-pre.Rmd
+rev.dat2.pre = rev.dat2
+supp.plot.pre = supp.plot
+hr.plot.pre = hr.plot
+cat.plot.pre = cat.plot
+
+load(file="../sections/section2-dat-post.RData") # rev.dat2, supp.plot, hr.plot, cat.plot,  supp.plot.mod2, life.plot.mod2, repro.plot.mod, health.plot.mod, cat.plot.mod2 from section2-post.Rmd
+rev.dat2.post = rev.dat2
+supp.plot.post = supp.plot
+hr.plot.post = hr.plot
+cat.plot.post = cat.plot
+
+
+load(file="../sections/section2-dat-all.RData") # rev.dat2, supp.plot, hr.plot, cat.plot,  supp.plot.mod2, life.plot.mod2, repro.plot.mod, health.plot.mod, cat.plot.mod2 from section2-post.Rmd
+rev.dat2.all = rev.dat2
+supp.plot.all = supp.plot
+hr.plot.all = hr.plot
+cat.plot.all = cat.plot
+
+
+# Load data for premenopausal data
+# from files run on Wine server, W:/projects/iron-aim4/sections
+# ================================================
+
+# NOTE: the following files are run on the server. Have to copy from 
+# "W:\projects\iron-aim4\sections\s2-model-perf-tables-post.RData"
+# "W:\projects\iron-aim4\sections\s2-model-perf-tables-pre.RData"
+# "W:\projects\iron-aim4\sections\s2-rms-post.RData"
+# "W:\projects\iron-aim4\sections\s2-rms-pre.RData"
+# to the U:\projects\iron-aim4\sections folder
+
+load(file="W:/projects/iron-aim4/sections/s2-rms-pre.RData") # v.out from section2-rms-pre.Rmd
+v.out.pre = v.out
+
+# from files run on Wine server, W:\projects\iron-aim4\sections
+load(file="W:/projects/iron-aim4/sections/s2-model-perf-tables-pre.RData") # dat.coef.merge.iron2, 
+#     dat.coef.merge.fesat2,
+#     dat.coef.merge.fertn2,
+#     dat.coef.mi.merge3, boot.set and impute.set for tables from section2-rms-pre.Rmd
+
+# rename for premenopausal group
+dcm.iron.pre = dat.coef.merge.iron2
+dcm.fesat.pre = dat.coef.merge.fesat2
+dcm.fertn.pre = dat.coef.merge.fertn2
+dcm.mi.pre = dat.coef.mi.merge3 
+
+#dcm.mi.pre[dcm.mi.pre$outcome=="Transferrin saturation",] 
+#class(dcm.mi.pre$glmnet.coef)
+
+load("W:/projects/iron-aim4/sections/t2-tabledat-pre.RData")
+
+# Load data for postmenopausal data
+# from files run on Wine server, W:/projects/iron-aim4/sections
+# ================================================
+
+load(file="W:/projects/iron-aim4/sections/s2-rms-post.RData") # v.out from section2-rms-post.Rmd
+v.out.post = v.out
+
+# from files run on Wine server, W:\projects\iron-aim4\sections
+load(file="W:/projects/iron-aim4/sections/s2-model-perf-tables-post.RData") # dat.coef.merge.iron2, 
+#     dat.coef.merge.fesat2,
+#     dat.coef.merge.fertn2,
+#     dat.coef.mi.merge3 for tables from section2-rms-post.Rmd
+
+# rename for postmenopausal group
+dcm.iron.post = dat.coef.merge.iron2
+dcm.fesat.post = dat.coef.merge.fesat2
+dcm.fertn.post = dat.coef.merge.fertn2
+dcm.mi.post = dat.coef.mi.merge3
+
+#load(file="../sections/section2-rms-dat-post.RData") # dat.coef., supp.plot, lifestyle.plot, binary.plot from section2-rms-post.Rmd
+
+
+# Load data combining pre- and postmenopausal data
+# from files run on Wine server, W:/projects/iron-aim4/sections
+# ================================================
+
+load(file="W:/projects/iron-aim4/sections/s2-rms-all.RData") # v.out from section2-rms-all.Rmd
+v.out.all = v.out
+
+load(file="W:/projects/iron-aim4/sections/s2-model-perf-tables-all.RData")
+
+# rename for combined group
+dcm.iron.all = dat.coef.merge.iron2
+dcm.fesat.all = dat.coef.merge.fesat2
+dcm.fertn.all = dat.coef.merge.fertn2
+dcm.mi.all = dat.coef.mi.merge3
+
+```
+
+
+```{r, eval=T}
+
+load(file="../sections/k1-subcohort.RData") # k1, tot from ../sections/section1-subcohort.Rmd
+
+```
+
+```{r, results="markup", eval=T}
+
+# Note: you have to use kable. Can't just put in k1 loaded from section1-subcohort.Rmd.
+# If so, you will get a nesting error in latex
+
+kable(tot,
+      col.names = c("Variable", "Total", "Yes", "No"),
+      row.names = F,
+      booktabs=T,
+      escape=F,
+      linesep = "", 
+      caption = "Baseline characteristics of subcohort by menopause status at baseline",
+      longtable=T) %>%
+  column_spec(2:4, width = "6em") %>%
+  column_spec(1, width = "25em") %>%
+  pack_rows("Serum, baseline", 2, 6) %>%
+  pack_rows("Continuous", 7, 16) %>%
+  pack_rows("Categorical", 17, nrow(tot)) %>%
+  add_header_above(c(" "=2, "Postmenopause status at baseline\n in subcohort only" = 2)) %>%
+  add_indent(c(18:20,
+               22:24,
+               26:31,
+               33:37,
+               39:42,
+               44:49)) %>% 
+  kable_styling(latex_options = c("HOLD_position"), full_width = F)
+
+```
+
+<!-- NOTE: Missing data in methods based on ../sections/missing.Rmd -->
+
+<!-- Imputed results, premenopause -->
+
+```{r, eval=T}
+
+# All results with column groupings for serum outcomes
+
+# convert glmnet.coef to char and change 0.000 to <0.001
+dcm.mi.pre[dcm.mi.pre$outcome=="Transferrin saturation",]
+dcm.mi.pre2 = dcm.mi.pre
+dcm.mi.pre2$glmnet.coef = as.character(dcm.mi.pre2$glmnet.coef)
+table(dcm.mi.pre2$glmnet.coef)
+
+dcm.mi.pre2 = within(dcm.mi.pre2, {
+  glmnet.coef = ifelse(glmnet.coef=="0", "<0.001", glmnet.coef)
+})
+dcm.mi.pre2[dcm.mi.pre2$outcome=="Transferrin saturation",]
+class(dcm.mi.pre2$glmnet.coef)
+
+
+head(dcm.mi.pre2[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "glmnet.coef")])
+
+
+test = dcm.mi.pre2[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "glmnet.coef")] %>%
+  pivot_wider(names_from=outcome, values_from = c("est.ci", "step.coef", "glmnet.coef"))
+
+test
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.mi.pre$outcome)
+names_to_order <- map(suffixes, ~ names(test)[grep(paste0("_", .x), names(test))]) %>% unlist 
+names_id <- setdiff(names(test), names_to_order)
+
+test2  = test %>%
+  select(names_id, names_to_order)
+
+names(test2)
+```
+
+
+```{r, eval=T}
+# Clare is interested in re-ordering columns with the stepwise and lasso est first to make comparisons easier for her (ML estimates)
+
+test.rev.pre = dcm.mi.pre2[,c("outcome", "cat2", "labels", "step.coef", "glmnet.coef", "est.ci")] %>%
+  pivot_wider(names_from=outcome, values_from = c("step.coef", "glmnet.coef","est.ci"))
+
+test.rev.pre
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.mi.pre$outcome)
+names_to_order <- map(suffixes, ~ names(test.rev.pre)[grep(paste0("_", .x), names(test.rev.pre))]) %>% unlist
+names_id <- setdiff(names(test.rev.pre), names_to_order)
+
+test2.rev.pre  = test.rev.pre %>%
+  select(names_id, names_to_order)
+
+names(test2.rev.pre)
+
+```
+
+\clearpage
+\newpage
+
+\blandscape
+
+
+```{r, results='markup', eval=T}
+# revised tables per Clare's request 5/2022
+kable(test2.rev.pre,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("Backwards selection", "Lasso", "ML estimate (95\\% CI)"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for premenopausal group, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  column_spec(c(3,4,6,7,9,10), width = "5em") %>%
+  column_spec(c(5,8,11), width = "10em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=8, latex_options="scale_down") 
+```
+
+\elandscape
+
+
+```{r, results='markup', eval=F, include=F}
+
+kable(test2,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("ML estimate (95\\% CI)", "Backwards selection", "Lasso"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for premenopausal group, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=8, latex_options="scale_down") 
+```
+
+
+<!-- Imputed results, postmenopause -->
+
+```{r, eval=T}
+
+# All results with column groupings for serum outcomes
+
+head(dcm.mi.post[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "glmnet.coef")])
+
+test = dcm.mi.post[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "glmnet.coef")] %>%
+  pivot_wider(names_from=outcome, values_from = c("est.ci", "step.coef", "glmnet.coef"))
+
+test
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.mi.post$outcome)
+names_to_order <- map(suffixes, ~ names(test)[grep(paste0("_", .x), names(test))]) %>% unlist
+names_id <- setdiff(names(test), names_to_order)
+
+test2  = test %>%
+  select(names_id, names_to_order)
+
+names(test2)
+```
+
+
+
+```{r, eval=T}
+# Clare is interested in re-ordering columns with the stepwise and lasso est first to make comparisons easier for her (ML estimates)
+
+test.rev = dcm.mi.post[,c("outcome", "cat2", "labels", "step.coef", "glmnet.coef", "est.ci")] %>%
+  pivot_wider(names_from=outcome, values_from = c("step.coef", "glmnet.coef","est.ci"))
+
+test.rev
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.mi.post$outcome)
+names_to_order <- map(suffixes, ~ names(test.rev)[grep(paste0("_", .x), names(test.rev))]) %>% unlist
+names_id <- setdiff(names(test.rev), names_to_order)
+
+test2.rev  = test.rev %>%
+  select(names_id, names_to_order)
+
+names(test2.rev)
+
+```
+
+\clearpage
+\newpage
+
+\blandscape
+
+
+```{r, results='markup', eval=T}
+# revised tables per Clare's request 5/2022
+kable(test2.rev,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("Backwards selection", "Lasso", "ML estimate (95\\% CI)"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for postmenopausal group, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  column_spec(c(3,4,6,7,9,10), width = "5em") %>%
+  column_spec(c(5,8,11), width = "10em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=8, latex_options="scale_down") 
+```
+
+\elandscape
+
+
+
+```{r, results='markup', eval=F, include=F}
+# original table setup
+kable(test2,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("ML estimate (95\\% CI)", "Backwards selection", "Lasso"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for postmenopausal group, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=7, latex_options="scale_down") 
+
+```
+
+
+
+<!-- Imputed results, combined sample of pre- and postmenopause -->
+
+```{r, eval=F, include=F}
+
+# All results with column groupings for serum outcomes
+
+head(dcm.mi.all[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "glmnet.coef")])
+
+test = dcm.mi.all[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "glmnet.coef")] %>%
+  pivot_wider(names_from=outcome, values_from = c("est.ci", "step.coef", "glmnet.coef"))
+
+test
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.mi.all$outcome)
+names_to_order <- map(suffixes, ~ names(test)[grep(paste0("_", .x), names(test))]) %>% unlist
+names_id <- setdiff(names(test), names_to_order)
+
+test2  = test %>%
+  select(names_id, names_to_order)
+
+names(test2)
+```
+
+
+<!-- \clearpage -->
+<!-- \newpage -->
+
+<!-- \blandscape -->
+
+```{r, results='markup', eval=F, include=F}
+
+kable(test2,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("ML estimate (95\\% CI)", "Backwards selection", "Lasso"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for combined pre- and postmenopausal groups, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=7, latex_options="scale_down") 
+
+```
+
+<!-- \elandscape -->
+
+# Supplemental materials
+
+<div id="refs"></div>
+
+\beginsupplement
+
+
+```{r, fig.width=12, fig.height=14, fig.cap="Predictor coefficients in univariate predictor model, univariable models for premenopausal group", eval=F, fig.keep='all'}
+# Premenopause summary
+## Univariable models
+
+plot_grid(supp.plot.mod2, NULL, 
+          life.plot.mod2, NULL, 
+          repro.plot.mod, NULL,
+          health.plot.mod, NULL,
+          cat.plot.mod2,
+          rel_heights = c(0.20,-0.02, 0.16, -0.02, 0.16, -0.02, 0.18, -0.02, 0.20),
+          #labels=c("Supplements", "Lifestyle", "Binary"),
+          ncol=1,
+          align="v")
+```
+
+
+```{r,  eval=T}
+# from section2-pre.Rmd
+
+supp.vars = c("na.all.dt.fe",
+              "na.sup.fe",
+              "na.all.sd.fe",
+              "na.all.dt.ca.100",
+              'na.sup.ca.100',
+              'na.all.sd.ca.100') 
+
+
+
+# Group 2. Lifestyle: exercise, BMI, meat consumption, alcohol consumption
+
+
+lifestyle.vars = c("AL.DrinksPWC.4",
+                 "PH2.TotHrsPerWeek.4",
+                 "FG.all.pf.meat.8",
+                 'bmi')
+                 
+# Group 3: years since last menstrual period, reproductive life span (years) that is calculated by subtracting age at menarche from age at menopause based on last menstrual period, estrogen or progesterone use (number of total years), and total years pregnant and breastfeeding
+
+repro.vars = c( "HR.DiffLMPintv",
+                "HR.HRT.Years",
+                'totpreg.mo2',
+                'rls')
+
+repro.vars2 = c('totpreg.mo2')
+
+# Group 4: self-report of ever having a health condition at baseline were: preeclampsia, polycystic ovary syndrome (PCOS), irritable bowel syndrome (IBS), colon/rectum polyps, and iron-deficiency anemia (IDA)
+
+health.vars = c('pcos.rev', 
+                                          'preeclampsia',
+                                          'ibd.rev',
+                                          'polyps.rev',
+                                          'MC116.f')
+
+# Group 5: : statin use, regular aspirin use (1+/week for 3 or more months), hormone replacement therapy (HRT), and recent blood donation (within past 12 months). We also included three genetic variants that have been confirmed to be associated with serum iron (rs1800562 (HFE gene), rs1799945 (HFE gene), and rs855791 (TMPRSS6 gene))
+
+# Checking results for blood donation in past 12 months
+#model = lm(scale(log.serum.ferritin) ~ blood.don.12mos + baseline.age, 
+#           data=s2.dat)
+
+bin.vars = c('HZ.RX.Chol.Statin.Current',
+             'HZ.RX.NSAID.Aspirin.Current.Reg',
+             'blood.don.12mos')#,
+             #'rs1799945.g',
+             #'rs1800562.a',
+             #'rs855791.g'
+             
+
+# =======================================================
+sub.dat = rev.dat2.pre[rev.dat2.pre$cov %in% c(supp.vars,
+                                            lifestyle.vars,
+                                            repro.vars2,
+                                            health.vars,
+                                            bin.vars) & !(rev.dat2.pre$outcome=="PC1"),]
+#head(sub.dat)
+#levels(factor(sub.dat$outcome))
+
+sub.dat = within(sub.dat, {
+  cat2 = ifelse(cov %in% bin.vars, "Binary predictors",
+                ifelse(cov %in% health.vars, "Health conditions (ever)",
+                       ifelse(cov %in% repro.vars, "Reproductive health", 
+                              ifelse(cov %in% lifestyle.vars, "Lifestyle", 
+                                     ifelse(cov %in% supp.vars, "Supplement and Diet", cov )))))
+  outcome2 = factor(outcome,
+                    labels=c("ln(Ferritin)", "Transferrin saturation", "Serum iron"))
+  
+})
+
+sub.dat2 = sub.dat[, c( "labels", "cat2", "est.ci", "outcome2") ]
+
+sub.dat2 = sub.dat2[order(sub.dat2$cat2, sub.dat2$labels, sub.dat2$outcome), 
+                    c( "cat2", "labels", "outcome2", "est.ci")]
+# head(sub.dat2)
+
+
+```
+
+
+\clearpage
+\newpage
+
+<!-- NOTE: do not put multiple dots in file path?-->
+<!-- Source: https://www.overleaf.com/learn/latex/Inserting_Images -->
+
+<!-- IMPORTANT NOTE: figures do not render in bookdown unless you specify pdflatex at U:\projects\iron-aim4\project-summary\_output.yml as the latex_engine -->
+
+
+![Univariate regression model coefficients for candidate predictors for premenopausal women](../sections/all-vars-ms-pre.png){ height=80% }
+
+
+
+
+\clearpage
+\newpage
+
+
+```{r, results="markup", eval=T}
+
+kable(sub.dat2, 
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "Outcome", "Estimate (95\\% CI)"),
+      escape=F,
+      row.names=F,
+      longtable=T,
+      caption="Univariate regression model parameters for candidate predictors for premenopausal women") %>%  
+  #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1:2, width = "15em") %>%
+  collapse_rows(columns =1:2) %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header", "HOLD_position"),
+                font_size=8) 
+
+```
+
+Note: Each row represents a separate regression model and all models are adjusted for age at study entry.
+
+\clearpage
+\newpage
+
+
+
+
+
+<!-- Table for premenopausal complete case predictor models -->
+
+<!-- Source of tables: section2-rms-pre.Rmd -->
+
+```{r, eval=T}
+# Combine all 3 outcomes for complete case oremenopausal models into one table
+dcm.pre = rbind.data.frame(dcm.iron.pre, 
+                           dcm.fertn.pre,
+                           dcm.fesat.pre)
+dim(dcm.pre)
+names(dcm.pre)
+
+unique(dcm.pre$outcome)
+# fix two diff versions of Transferrin saturation
+dcm.pre = within(dcm.pre, {
+  outcome = ifelse(outcome=="Transferrin Saturation", "Transferrin saturation", outcome)
+})
+unique(dcm.pre$outcome)  #check
+
+head(dcm.pre[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")])
+
+test = dcm.pre[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")] %>%
+  pivot_wider(names_from=outcome, values_from = c("est.ci", "step.coef", "estimate.glmnet"))
+
+test
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.pre$outcome)
+names_to_order <- map(suffixes, ~ names(test)[grep(paste0("_", .x), names(test))]) %>% unlist
+names_id <- setdiff(names(test), names_to_order)
+
+test2  = test %>%
+  select(names_id, names_to_order)
+
+names(test2)
+
+```
+
+\blandscape
+
+```{r, results='markup', eval=T}
+
+kable(test2,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("ML estimate (95\\% CI)", "Backwards selection", "Lasso"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for premenopausal group, complete cases") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "8em") %>%
+  column_spec(2, width = "10em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(latex_options = c("HOLD_position", "repeat_header", "scale_down"), full_width = F,
+                font_size=7)
+```
+
+\elandscape
+
+
+
+```{r, eval=F, include=F}
+
+## Predictor models
+### Prediction model performance statistics
+
+kable(v.out.pre[,c(5,1:3)], 
+      booktabs=T,
+      col.names=c("Measure", "Observed performance", "Average optimism", "Optimism Corrected"),
+      row.names = F,
+      caption = "Model performance statistics based on internal validation by serum iron outcome") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position")) %>%
+  pack_rows("Iron (mg/dL)", 1, 2) %>%
+  pack_rows("Ferritin (mg/dL)", 3, 4) %>%
+  pack_rows("Transferrin saturation (%)", 5, 6)
+  
+
+```
+
+
+\clearpage
+\newpage
+
+
+<!-- Postmenopausal complete case analysis -->
+
+
+```{r, fig.width=12, fig.height=14, fig.cap="Postmenopause plot of predictor coefficients", eval=F, fig.keep='all'}
+
+plot_grid(supp.plot.mod2, NULL, 
+          life.plot.mod2, NULL, 
+          repro.plot.mod, NULL,
+          health.plot.mod, NULL,
+          cat.plot.mod2,
+          rel_heights = c(0.20,-0.02, 0.16, -0.02, 0.16, -0.02, 0.18, -0.02, 0.20),
+          #labels=c("Supplements", "Lifestyle", "Binary"),
+          ncol=1,
+          align="v")
+
+```
+
+![Univariate regression model coefficients for candidate predictors for postmenopausal women](../sections/all-vars-ms-post.png){ height=80% }
+
+
+
+\clearpage
+\newpage
+
+```{r, results="markup", eval=T}
+# from section2-post.Rmd
+# =======================================================
+sub.dat = rev.dat2.post[rev.dat2.post$cov %in% c(supp.vars,
+                                            lifestyle.vars,
+                                            repro.vars,
+                                            health.vars,
+                                            bin.vars)  & !(rev.dat2.post$outcome.f=="PC1"),]
+#head(sub.dat)
+# levels(factor(sub.dat$outcome))
+sub.dat = within(sub.dat, {
+  cat2 = ifelse(cov %in% bin.vars, "Binary predictors",
+                ifelse(cov %in% health.vars, "Health conditions (ever)",
+                       ifelse(cov %in% repro.vars, "Reproductive health", 
+                              ifelse(cov %in% lifestyle.vars, "Lifestyle", 
+                                     ifelse(cov %in% supp.vars, "Supplement and Diet", cov )))))
+  outcome2 = factor(outcome,
+                    labels=c("ln(Ferritin)", "Transferrin saturation", "Serum iron"))
+})
+
+sub.dat2 = sub.dat[, c( "labels", "cat2", "est.ci", "outcome2") ]
+
+sub.dat2 = sub.dat2[order(sub.dat2$cat2, sub.dat2$labels, sub.dat2$outcome), 
+                    c( "cat2", "labels", "outcome2", "est.ci")]
+# head(sub.dat2)
+
+
+
+kable(sub.dat2, 
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "Outcome", "Estimate (95\\% CI)"),
+      escape=F,
+      row.names=F,
+      longtable=T,
+      caption="Univariate regression model parameters for candidate predictors for postmenopausal  women") %>%  
+  #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1:2, width = "15em") %>%
+  collapse_rows(columns =1:2) %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header", "HOLD_position"),
+                font_size=8)
+
+```
+
+Note: Each row represents a separate regression model and all models are adjusted for age at study entry and years since last menstrual period.
+
+\clearpage
+\newpage
+
+```{r, fig.width=12, fig.height=14, fig.cap="Postmenopause plot of predictor coefficients", eval=F, fig.keep='all'}
+include_graphics("./sections/all-vars-ms-post.png")
+```
+
+
+<!-- The model performance statistics methods are similar to those found in [Hudda et al. 2019](https://www.bmj.com/content/366/bmj.l4293) -->
+
+
+```{r, results="markup", eval=F, include=FALSE}
+## Predictor models
+
+### Prediction model performance statistics
+
+kable(v.out.post[,c(5,1:3)], 
+      booktabs=T,
+      col.names=c("Measure", "Observed performance", "Average optimism", "Optimism Corrected"),
+      row.names = F,
+      caption = "Model performance statistics based on internal validation by serum iron outcome") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position")) %>%
+  pack_rows("Iron (mg/dL)", 1, 2) %>%
+  pack_rows("Ferritin (mg/dL)", 3, 4) %>%
+  pack_rows("Transferrin saturation (%)", 5, 6)
+  
+
+```
+
+
+
+
+<!-- Table for postmenopausal complete case predictor models -->
+
+<!-- Source of tables: section2-rms-post.Rmd -->
+
+```{r, eval=T}
+# Combine all 3 outcomes for complete case premenopausal models into one table
+dcm.post = rbind.data.frame(dcm.iron.post, 
+                           dcm.fertn.post,
+                           dcm.fesat.post)
+dim(dcm.post)
+names(dcm.post)
+
+unique(dcm.post$outcome)
+# fix two diff versions of Transferrin saturation
+dcm.post = within(dcm.post, {
+  outcome = ifelse(outcome=="Transferrin Saturation", "Transferrin saturation", outcome)
+})
+unique(dcm.post$outcome)  #check
+
+head(dcm.post[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")])
+
+test = dcm.post[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")] %>%
+  pivot_wider(names_from=outcome, values_from = c("est.ci", "step.coef", "estimate.glmnet"))
+
+test
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.post$outcome)
+names_to_order <- map(suffixes, ~ names(test)[grep(paste0("_", .x), names(test))]) %>% unlist
+names_id <- setdiff(names(test), names_to_order)
+
+test2  = test %>%
+  select(names_id, names_to_order)
+
+names(test2)
+
+```
+
+
+
+\clearpage
+\newpage
+
+\blandscape
+
+
+```{r, results='markup', eval=T}
+
+kable(test2,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("ML estimate (95\\% CI)", "Backwards selection", "Lasso"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for postmenopausal group, complete cases") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "8em") %>%
+  column_spec(2, width = "10em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(latex_options = c("HOLD_position", "repeat_header", "scale_down"), full_width = F,
+                font_size=7)
+
+```
+
+
+\elandscape
+
+
+
+<!-- Combined pre- and postmenopausal sample complete case info -->
+<!-- =========================================================== -->
+
+
+
+<!-- ![Univariate regression model coefficients for candidate predictors for combined sample with pre- and postmenopausal groups of women](../sections/all-vars-ms-all.png){ height=80% } -->
+
+
+
+<!-- \clearpage -->
+<!-- \newpage -->
+
+```{r, results="markup", eval=F, include=F}
+
+# from section2-all.Rmd
+
+# =======================================================
+sub.dat = rev.dat2.all[rev.dat2.all$cov %in% c(supp.vars,
+                                            lifestyle.vars,
+                                            repro.vars,
+                                            health.vars,
+                                            bin.vars)  & !(rev.dat2.all$outcome.f=="PC1"),]
+#head(sub.dat)
+# levels(factor(sub.dat$outcome))
+sub.dat = within(sub.dat, {
+  cat2 = ifelse(cov %in% bin.vars, "Binary predictors",
+                ifelse(cov %in% health.vars, "Health conditions (ever)",
+                       ifelse(cov %in% repro.vars, "Reproductive health", 
+                              ifelse(cov %in% lifestyle.vars, "Lifestyle", 
+                                     ifelse(cov %in% supp.vars, "Supplement and Diet", cov )))))
+  outcome2 = factor(outcome,
+                    labels=c("ln(Ferritin)", "Transferrin saturation", "Serum iron"))
+})
+
+sub.dat2 = sub.dat[, c( "labels", "cat2", "est.ci", "outcome2") ]
+
+sub.dat2 = sub.dat2[order(sub.dat2$cat2, sub.dat2$labels, sub.dat2$outcome), 
+                    c( "cat2", "labels", "outcome2", "est.ci")]
+# head(sub.dat2)
+
+
+
+kable(sub.dat2, 
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "Outcome", "Estimate (95\\% CI)"),
+      escape=F,
+      row.names=F,
+      longtable=T,
+      caption="Univariate regression model parameters for candidate predictors for combined group of pre- and postmenopausal groups of women") %>%  
+  #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1:2, width = "15em") %>%
+  collapse_rows(columns =1:2) %>% 
+  kable_styling(latex_options = c("striped", "scale_down", "repeat_header", "HOLD_position"),
+                font_size=8)
+
+```
+
+Note: Each row represents a separate regression model and all models are adjusted for age at study entry.
+
+\clearpage
+\newpage
+
+
+
+
+<!-- Table for combined group of pre- and postmenopausal complete case predictor models -->
+
+<!-- Source of tables: W:\projects\iron-aim4\sections\section2-rms-all.Rmd -->
+
+```{r, eval=T}
+# Combine all 3 outcomes for complete case premenopausal models into one table
+dcm.all = rbind.data.frame(dcm.iron.all, 
+                           dcm.fertn.all,
+                           dcm.fesat.all)
+dim(dcm.all)
+names(dcm.all)
+
+unique(dcm.all$outcome) 
+# fix two diff versions of Transferrin saturation
+dcm.all = within(dcm.all, {
+  outcome = ifelse(outcome=="Transferrin Saturation", "Transferrin saturation", outcome)
+})
+unique(dcm.all$outcome)  #check
+
+head(dcm.all[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")])
+
+test = dcm.all[,c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")] %>%
+  pivot_wider(names_from=outcome, values_from = c("est.ci", "step.coef", "estimate.glmnet"))
+
+test
+
+# re-order columns
+# Source: https://stackoverflow.com/questions/60399441/tidyrpivot-wider-reorder-column-names-grouping-by-name-from
+suffixes <- unique(dcm.all$outcome)
+names_to_order <- map(suffixes, ~ names(test)[grep(paste0("_", .x), names(test))]) %>% unlist
+names_id <- setdiff(names(test), names_to_order)
+
+test2  = test %>%
+  select(names_id, names_to_order)
+
+names(test2)
+
+```
+
+
+
+\clearpage
+\newpage
+
+\blandscape
+
+
+```{r, results='markup', eval=T}
+
+kable(test2,
+      booktabs=T, 
+      col.names = c("Category", "Variable label",
+                    rep(c("ML estimate (95\\% CI)", "Backwards selection", "Lasso"),3)),
+      escape=F,
+      longtable=F,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates by iron outcome for combined group of pre- and postmenopausal group, complete cases") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "8em") %>%
+  column_spec(2, width = "10em") %>%
+  add_header_above(c(" " = 2, 
+                     "ln(Ferritin)" = 3, 
+                     "Serum Iron" = 3, 
+                     "Transferrin Saturation" = 3)) %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(latex_options = c("HOLD_position", "repeat_header", "scale_down"), full_width = F,
+                font_size=7)
+
+```
+
+
+
+\elandscape

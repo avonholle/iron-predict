@@ -1,0 +1,325 @@
+---
+title: "Flow chart information: count missing."
+output:
+  pdf_document:
+    includes:
+      in_header: ../preamble-latex-nobookdown.tex
+    number_sections: yes
+    toc: no
+    highlight: tango
+  html_document:
+    theme: united
+    toc: no
+editor_options:
+  chunk_output_type: console
+header-includes:
+ \usepackage{float}
+---
+
+# Section 2, premenopause # {#s2pre}
+
+
+<!-- Source: U:\projects\Iron-nails-serum\sections\section6.Rmd  -->
+
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      results = 'hide',
+                      warning = F,
+                      message = F,
+                      error = F,
+                      fig.pos = 'H')
+
+#runif(1, 0, 10^8)
+set.seed(74268794)
+
+```
+
+
+```{r, include=F}
+# bring in packages
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+library(dplyr)
+library(tidyr)
+library(plyr)
+#library(expss) # https://cran.r-project.org/web/packages/expss/vignettes/labels-support.html
+# NOTE: expss seems to mask a a lot of functions from other packages listed here.
+library(cowplot)
+library(splines)
+library(sjlabelled)
+require(dplyr)
+
+```
+
+
+
+
+```{r}
+
+# source: section2-dataprep.Rmd
+
+load(file="../sections/s2.RData") # s2.dat, cov.vars.new, labels.df from section2-dataprep.Rmd
+
+names(s2.dat)
+dim(s2.dat)
+cov.vars.new
+
+```
+
+```{r, eval=F, include=F}
+
+cov.vars.new = cov.vars.new[!(cov.vars.new %in% c("HR57.2"))]; cov.vars.new
+
+dim(s2.dat)
+table(s2.dat$menop.status, useNA = "always")
+s2.dat = s2.dat[s2.dat$menop.status==0,] # select premenopausal
+dim(s2.dat)
+
+s2.dat$baseline.age = scale(s2.dat$baseline.age, scale=F)
+cov.vars.new
+
+cov.vars.new = cov.vars.new[!(cov.vars.new %in% c("HR_Menopause.f",
+                                                  "HR_DiffLMPintv",
+                                                  "HR_HRTcurrent.f",
+                                                  "rls",
+                                                  "HR_HRT_Years"))]; cov.vars.new # remove menopause variable and any post-menopause related variables
+
+
+table(s2.dat$menop.status, useNA = "always") # menopause variable
+sum(table(s2.dat$menop.status, useNA = "always")) # menopause variable
+
+```
+
+# Premenopausal group
+
+```{r}
+
+# Missing for premenopausal group
+# =================================
+
+iron.vars = c("UMN_Iron_Baseline_FE", "UMN_Iron_Baseline_FERTN", "UMN_Iron_Baseline_FESAT")
+
+# See groups of variables in section2-post.Rmd
+
+# Group 1. supplements and dietary intake
+# ==========================
+
+supp.covs = c("na_all_sd_fe",
+              'na_all_sd_ca_100') 
+
+# Group 2. Lifestyle: exercise, BMI, meat consumption, alcohol consumption
+# ==========================
+
+lifestyle.covs = c("AL_DrinksPWC_4",
+                 "PH2_TotHrsPerWeek_4",
+                 "FG_all_pf_meat_8", 
+                 'bmi')
+
+# Group 3: years since last menstrual period, reproductive life span (years) that is calculated by subtracting age at menarche from age at menopause based on last menstrual period, estrogen or progesterone use (number of total years), and total years pregnant and breastfeeding
+# ==========================
+
+repro.covs = c( #"HR_DiffLMPintv",
+                #"HR_HRT_Years",
+                'totpreg.mo2')#,
+                #'rls')
+# take out postmenopause-related variables
+
+# Group 4: self-report of ever having a health condition at baseline were: preeclampsia, polycystic ovary syndrome (PCOS), irritable bowel syndrome (IBS), colon/rectum polyps, and iron-deficiency anemia (IDA)
+# ==========================
+
+health.covs = c('pcos.rev', 
+                'preeclampsia',
+                'ibd.rev',
+                'polyps.rev',
+                'MC116.f')
+
+# Group 5: : statin use, regular aspirin use (1+/week for 3 or more months), hormone replacement therapy (HRT), and recent blood donation (within past 12 months). We also included three genetic variants that have been confirmed to be associated with serum iron (rs1800562 (HFE gene), rs1799945 (HFE gene), and rs855791 (TMPRSS6 gene))
+# ==========================
+
+bin.covs = c('HZ_RX_Chol_Statin_Current',
+             'HZ_RX_NSAID_Aspirin_Current_Reg',
+             'blood.don.12mos')#,
+             #'rs1799945.g',
+             #'rs1800562.a',
+             #'rs855791.g')
+# genetic variables are not from self-report questions so take out 
+
+
+# analysis vars
+avars = c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs); avars
+
+# subset to premenopausal
+dat1 = s2.dat[which(s2.dat$menop.status==0), avars]
+length(avars) #check
+dim(dat1) # check
+
+```
+
+## Number of missing per variable
+
+```{r, results='markup'}
+# Source: https://stackoverflow.com/questions/24027605/determine-the-number-of-na-values-in-a-column
+na_count <-sapply(dat1, function(y) sum(length(which(is.na(y)))))
+kable(data.frame(100*round(na_count/nrow(dat1),3)), booktabs=T, col.names = ("Percent missing"))
+
+```
+
+
+## Number of missing per participant
+
+```{r, results='markup'}
+
+# source: https://stackoverflow.com/questions/37801338/count-nas-per-row-in-dataframe
+miss.row = rowSums(is.na(dat1))
+
+#table(miss.row)
+#sum(table(miss.row))
+
+no.miss.row = length(avars) - rowSums(!(is.na(dat1)))
+
+kable(table(no.miss.row), booktabs=T)
+
+#kable(sum(table(no.miss.row)), booktabs=T)
+
+kable(round(100*prop.table(table(no.miss.row)),1), booktabs=T, col.names = c("No. missing", "Proportion missing"))
+
+#table(c(miss.row, no.miss.row)) # counts
+#100*round(prop.table(table(c(no.miss.row, miss.row))),2) # proportion
+
+```
+
+## Total number missing
+
+
+```{r}
+
+miss.pre = dim(dat1[!(complete.cases(dat1)),])[1]
+notmiss.pre = dim(dat1[complete.cases(dat1),])[1]
+
+prop.miss.pre = dim(dat1[!(complete.cases(dat1)),]) / (dim(dat1[complete.cases(dat1),]) + dim(dat1[!(complete.cases(dat1)),]))
+
+```
+
+`r miss.pre` missing at least one, `r notmiss.pre` missing none, and `r prop.miss.pre[1]` is the proportion missing at least one.
+
+# Postmenopausal group
+
+```{r}
+# determine how many have just 1, 2, 3, etc... number of missing covariates.
+
+
+iron.vars = c("UMN_Iron_Baseline_FE", "UMN_Iron_Baseline_FERTN", "UMN_Iron_Baseline_FESAT")
+
+# See groups of variables in section2-post.Rmd
+
+# Group 1. supplements and dietary intake
+# ==========================
+
+supp.covs = c("na_all_sd_fe",
+              'na_all_sd_ca_100') 
+
+# Group 2. Lifestyle: exercise, BMI, meat consumption, alcohol consumption
+# ==========================
+
+lifestyle.covs = c("AL_DrinksPWC_4",
+                 "PH2_TotHrsPerWeek_4",
+                 "FG_all_pf_meat_8", 
+                 'bmi')
+
+# Group 3: years since last menstrual period, reproductive life span (years) that is calculated by subtracting age at menarche from age at menopause based on last menstrual period, estrogen or progesterone use (number of total years), and total years pregnant and breastfeeding
+# ==========================
+
+repro.covs = c( "HR_DiffLMPintv",
+                "HR_HRT_Years",
+                'totpreg.mo2',
+                'rls')
+
+
+# Group 4: self-report of ever having a health condition at baseline were: preeclampsia, polycystic ovary syndrome (PCOS), irritable bowel syndrome (IBS), colon/rectum polyps, and iron-deficiency anemia (IDA)
+# ==========================
+
+health.covs = c('pcos.rev', 
+                'preeclampsia',
+                'ibd.rev',
+                'polyps.rev',
+                'MC116.f')
+
+# Group 5: : statin use, regular aspirin use (1+/week for 3 or more months), hormone replacement therapy (HRT), and recent blood donation (within past 12 months). We also included three genetic variants that have been confirmed to be associated with serum iron (rs1800562 (HFE gene), rs1799945 (HFE gene), and rs855791 (TMPRSS6 gene))
+# ==========================
+
+bin.covs = c('HZ_RX_Chol_Statin_Current',
+             'HZ_RX_NSAID_Aspirin_Current_Reg',
+             'blood.don.12mos')#,
+             #'rs1799945.g',
+             #'rs1800562.a',
+             #'rs855791.g')
+# genetic variables are not from self-report questions so take out 
+
+
+# analysis vars
+avars = c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs); avars
+extra.vars = c('menop.age', 'age.menarche', 'PG_BreastTotal', 'PG_MedParity') # part of rls variable
+
+# what variables are already in the s2.dat data set?
+avars[avars %in% names(s2.dat)]
+extra.vars[extra.vars %in% names(s2.dat)] # none
+
+# what analysis variables are not in the s2.dat data set?
+avars[!(avars %in% names(s2.dat))]
+
+# subset to postmenopausal
+dat1 = s2.dat[which(s2.dat$menop.status==1), avars]
+length(avars) #check
+dim(dat1) # check
+
+```
+
+
+## Number of missing per variable
+
+```{r, results='markup'}
+
+# Source: https://stackoverflow.com/questions/24027605/determine-the-number-of-na-values-in-a-column
+na_count <-sapply(dat1, function(y) sum(length(which(is.na(y)))))
+kable(data.frame(100*round(na_count/nrow(dat1),3)), booktabs=T, col.names = c("Percent missing"))
+
+```
+
+
+## Number of missing per participant
+
+```{r, results='markup'}
+# source: https://stackoverflow.com/questions/37801338/count-nas-per-row-in-dataframe
+miss.row = rowSums(is.na(dat1))
+
+#table(miss.row)
+#sum(table(miss.row))
+
+no.miss.row = length(avars) - rowSums(!(is.na(dat1)))
+kable(table(no.miss.row), booktabs=T)
+#kable(sum(table(no.miss.row)), booktabs=T)
+kable(round(100*prop.table(table(no.miss.row)),1), booktabs=T, col.names = c("No. missing", "Proportion missing"))
+
+#table(c(miss.row, no.miss.row)) # counts
+#100*round(prop.table(table(c(no.miss.row, miss.row))),2) # proportion
+
+```
+
+## Total number missing
+
+
+```{r}
+
+miss.post = dim(dat1[!(complete.cases(dat1)),])[1]
+notmiss.post = dim(dat1[complete.cases(dat1),])[1]
+
+prop.miss.post = dim(dat1[!(complete.cases(dat1)),]) / (dim(dat1[complete.cases(dat1),]) + dim(dat1[!(complete.cases(dat1)),]))
+
+```
+
+`r miss.post` missing at least one, `r notmiss.post` missing none, and `r prop.miss.post[1]` is the proportion missing at least one.
+

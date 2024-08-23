@@ -1,0 +1,2330 @@
+---
+title: "Section 2: Characterize the association between a set of iron-related predictors and baseline iron status for all women combined (pre and postmenopausal) (using rms package)"
+output:
+  html_document:
+    theme: united
+    toc: no
+editor_options:
+  chunk_output_type: console
+header-includes:
+ \usepackage{float}
+---
+
+# Section 2 RMS, postmenopause # {#s2postrms}
+
+
+<!-- Source: U:\projects\Iron-nails-serum\sections\section6.Rmd  -->
+<!-- Source: /post/an-introduction-to-the-harrell-verse-predictive-modeling-using-the-hmisc-and-rms-packages/ -->
+
+```{r, include=FALSE}
+
+knitr::opts_chunk$set(echo = F,
+                      eval=F, # set to eval=F if the different predictor modeling is done and just need to reformat tables
+                      warning = F,
+                      fig.pos = 'H',
+                      float=F,
+                      fig.keep=F,
+                      results="hide")
+
+#runif(1, 0, 10^8)
+set.seed(74268794)
+
+```
+
+
+```{r, include=F, eval=T}
+
+# Bring in packages
+require(knitr)
+require(haven)
+require(data.table)
+require(ggplot2)
+require(kableExtra)
+library(dplyr)
+library(tidyr)
+library(plyr)
+library(expss) # https://cran.r-project.org/web/packages/expss/vignettes/labels-support.html
+# NOTE: expss seems to mask a a lot of functions from other packages listed here.
+library(cowplot)
+library(tidyverse)
+library(rms)
+
+require(labelled)
+require(splines)
+
+#require(BootValidation) # NOTE: not maintained for current version?
+
+require(psfmi)
+require(mice)
+library(glmnet)
+library(miselect)
+library(data.table)
+
+# https://stackoverflow.com/questions/53678412/make-na-values-in-table-just-blank-cells-when-using-cell-spec-in-kableextra
+
+options(knitr.kable.NA = '')
+
+```
+
+
+```{r, eval=TRUE}
+
+impute.set = 100 # set number of imputations for mice
+boot.set = 100 # set number of bootstrap within the imputations for validate function
+
+```
+
+
+```{r, eval=T}
+
+# Source: section2-dataprep.Rmd
+
+load(file="../sections/s2.RData") # s2.dat, cov.vars.new, labels.df from section2-dataprep.Rmd
+
+labels.df
+names(s2.dat)
+cov.vars.new
+
+cov.vars.new = cov.vars.new[!(cov.vars.new %in% c("HR57.2"))]; cov.vars.new
+
+
+dim(s2.dat)
+s2.dat = s2.dat[s2.dat$menop.status %in% c(0,1),] # select women who are postmenopausal at baseline
+dim(s2.dat)
+table(s2.dat$menop.status2)
+s2.dat$baseline.age = as.numeric(scale(s2.dat$baseline.age, scale=F))
+class(s2.dat$baseline.age)
+summary(s2.dat$baseline.age)
+
+attributes(s2.dat$HR_HRTcurrent.f)
+table(s2.dat$MC116.f)
+table(s2.dat$MC234.f)
+
+# convert menop status to binary numeric variable
+s2.dat$menop.status2 = as.numeric(s2.dat$menop.status)
+
+```
+
+```{r}
+
+# Double check distribution of iron variables by hrt status
+
+s2.dat = within(s2.dat, {
+  iron.qrt = cut(Serum.iron, quantile(Serum.iron, seq(0, 1, 0.25), na.rm=T))
+  ferritin.qrt = cut(Serum.ferritin, quantile(Serum.ferritin, seq(0, 1, 0.25), na.rm=T))
+  fesat.qrt = cut(Serum.fesat, quantile(Serum.fesat, seq(0, 1, 0.25), na.rm=T))
+})
+
+table(s2.dat$iron.qrt)
+table(s2.dat$HR_HRTcurrent.f)
+
+with(s2.dat, prop.table(table(iron.qrt, HR_HRTcurrent.f), margin=2))
+with(s2.dat, prop.table(table(ferritin.qrt, HR_HRTcurrent.f), margin=2))
+with(s2.dat, prop.table(table(fesat.qrt, HR_HRTcurrent.f), margin=2))
+
+```
+
+```{r}
+
+iron.vars = c("UMN_Iron_Baseline_FE", "UMN_Iron_Baseline_FERTN", "UMN_Iron_Baseline_FESAT")
+
+# See groups of variables in section2-post.Rmd
+
+# Group 1. supplements and dietary intake
+# ==========================
+
+supp.covs = c("na_all_sd_fe",
+              'na_all_sd_ca_100') 
+
+# Group 2. Lifestyle: exercise, BMI, meat consumption, alcohol consumption
+# ==========================
+
+lifestyle.covs = c("AL_DrinksPWC_4",
+                 "PH2_TotHrsPerWeek_4",
+                 "FG_all_pf_meat_8", 
+                 'bmi')
+
+# Group 3: years since last menstrual period, reproductive life span (years) that is calculated by subtracting age at menarche from age at menopause based on last menstrual period, estrogen or progesterone use (number of total years), and total years pregnant and breastfeeding
+# ==========================
+
+repro.covs = c( "HR_DiffLMPintv",
+                "HR_HRT_Years",
+                'totpreg.mo2',
+                'menop.status2')
+                #'rls')
+
+#sum(table(s2.dat$menop.status, useNA = "always"))
+
+# Group 4: self-report of ever having a health condition at baseline were: preeclampsia, polycystic ovary syndrome (PCOS), irritable bowel syndrome (IBS), colon/rectum polyps, and iron-deficiency anemia (IDA)
+# ==========================
+
+health.covs = c('pcos.rev', 
+                'preeclampsia',
+                'ibd.rev',
+                'polyps.rev',
+                'MC116.f')
+
+# Group 5: : statin use, regular aspirin use (1+/week for 3 or more months), hormone replacement therapy (HRT), and recent blood donation (within past 12 months). We also included three genetic variants that have been confirmed to be associated with serum iron (rs1800562 (HFE gene), rs1799945 (HFE gene), and rs855791 (TMPRSS6 gene))
+# ==========================
+
+bin.covs = c('HZ_RX_Chol_Statin_Current',
+             'HZ_RX_NSAID_Aspirin_Current_Reg',
+             'blood.don.12mos')#,
+             #'rs1799945.g',
+             #'rs1800562.a',
+             #'rs855791.g')
+# genetic variables are not from self-report questions so take out 
+
+c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)
+```
+
+
+```{r}
+# make a formula to use in old below using splines for continuous variables above.
+
+# Source: https://stackoverflow.com/questions/5251507/how-to-succinctly-write-a-formula-with-many-variables-from-a-data-frame
+
+## Create a formula for a model with a large number of variables:
+
+g1 = paste0("rcs(", supp.covs, ",3)", collapse = " + " )
+g1.simple = paste(supp.covs, collapse = " + ")
+
+g2 = paste0("rcs(", lifestyle.covs, ",3)", collapse = " + " )
+g2.simple = paste(lifestyle.covs, collapse = " + ")
+
+g3 = paste0( paste0("rcs(", repro.covs[!(repro.covs %in% c("menop.status2"))], ",3)", collapse = " + " ), " + menop.status2"); g3
+g3.simple = paste(repro.covs, collapse = " + ")
+
+g4 = paste(health.covs, collapse= " + ")
+
+g5 = paste(bin.covs, collapse= " + ")
+
+# vars
+covs = c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)
+covs
+
+```
+
+
+## Iron
+
+### Internal validation for ML model
+
+```{r}
+
+
+# set up formulas
+fmla.iron <- as.formula(paste("scale(Serum.iron) ~ ", 
+                              paste0( c(g1, g2, g3, g4, g5, "rcs(baseline.age)",
+                                        "menop.status2"),
+                                      collapse = " + ")))
+
+fmla.iron.simple = as.formula(paste("scale(Serum.iron) ~ ", 
+                              paste0( c(g1.simple, g2.simple, g3.simple,
+                                        g4, g5, "scale(baseline.age, scale=F)",
+                                        "menop.status2"),
+                                      collapse = " + ")))
+# run models
+table(s2.dat$HZ_RX_NSAID_Aspirin_Current_Reg)
+
+
+
+m0.iron <- ols(fmla.iron,
+                data = s2.dat, x = TRUE, y = TRUE)
+
+m0.iron.simple <- ols(fmla.iron.simple,
+               data = s2.dat, x = TRUE, y = TRUE)
+
+summary(lm(fmla.iron.simple, data=s2.dat))$r.squared
+print(m0.iron.simple)
+m0.iron.simple$stats["R2"]
+
+print(m0.iron, coef = FALSE)
+summary(lm(fmla.iron, data=s2.dat))$r.squared
+
+# ANOVA partial tests here, https://thomaselove.github.io/432-notes/using-ols-from-the-rms-package-to-fit-linear-models.html
+anova(m0.iron)
+plot(anova(m0.iron))
+
+v.iron = validate(m0.iron.simple, B=1000)
+v.iron
+
+class(v.iron)
+plot(v.iron)
+
+v.iron.out = v.iron[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")]
+v.iron.out
+
+# create coefficients for table
+# ==============================
+
+dat.coef.iron = data.frame(coef(summary.lm(m0.iron.simple)))
+dat.coef.iron
+
+dat.coef.iron$est.ci = with(dat.coef.iron, paste0(format(round(Estimate, 3), nsmall=3),
+                                                    " (",
+                                                    format(round(Estimate - 1.96*Std..Error, 3), nsmall=3),
+                                                    ", ",
+                                                    format(round(Estimate + 1.96*Std..Error, 3), nsmall=3),
+                                                    ")"))
+dat.coef.iron
+
+```
+
+
+
+### Internal validation for stepwise model
+
+```{r}
+sink(file='deleteme')
+v.iron2 = validate(m0.iron.simple, B=1000, bw=T)
+sink()
+
+colnames(v.iron2)
+rownames(v.iron2)
+
+v.iron.out2 = v.iron2[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")]
+v.iron.out2
+
+# create coefficients for table of original model
+# ==============================
+
+m0.iron.simple.step = fastbw(m0.iron.simple)
+print(m0.iron.simple.step, digits=4)
+m0.iron.simple.step$parms.kept
+
+step.iron.coefs = m0.iron.simple.step$coefficients
+iron.step.coefs = as.data.frame(m0.iron.simple.step$coefficients)
+
+round(m0.iron.simple.step$coefficients, 2)
+
+
+```
+
+
+```{r}
+
+dim(s2.dat)
+summary(s2.dat[c("Serum.iron", "Serum.ferritin", "Serum.fesat", covs)])
+
+s2.dat.nomiss = s2.dat[complete.cases(s2.dat[c("Serum.iron", "Serum.ferritin", "Serum.fesat", covs)])==T,]
+dim(s2.dat.nomiss)
+
+dim(s2.dat.nomiss)/dim(s2.dat)
+
+```
+
+
+```{r}
+
+# stepwise with multiple imputation
+names(s2.dat)
+s2.dat.iron = s2.dat[!(is.na(s2.dat$Serum.iron)), c("Serum.iron",covs,'baseline.age'),] # take out missing serum iron (n=12)
+s2.dat.iron$Serum.iron = as.numeric(scale(s2.dat.iron$Serum.iron)) 
+summary(s2.dat.iron)
+dim(s2.dat)
+dim(s2.dat.iron)
+
+# impute data
+set.seed(7327)
+head(s2.dat.iron)
+# Source: https://www.gerkovink.com/miceVignettes/Passive_Post_processing/Passive_imputation_post_processing.html
+ini <- mice(s2.dat.iron, maxit=0, print=F)
+pred <- ini$pred
+pred
+
+# take serum iron out of predictor matrix for mice, do not want to use outcome in predicting predictor matrix
+pred["Serum.iron",]=0
+pred
+
+meth<- ini$meth
+meth # looks reasonable
+
+mi.dat.fe <- mice(s2.dat.iron, m=impute.set, meth=meth, pred=pred, maxit=10, seed=123, print=F) # increase iterations, now m=2, once debugging done
+mi.dat.fe
+
+# Source: https://www.gerkovink.com/miceVignettes/Ad_hoc_and_mice/Ad_hoc_methods.html
+# https://stefvanbuuren.name/fimd/sec-howmany.html
+mi.dat.fe.long = complete(mi.dat.fe, "long")
+summary(mi.dat.fe.long)
+head(mi.dat.fe.long)
+table(mi.dat.fe.long$blood.don.12mos)
+table(mi.dat.fe.long$.imp)  # check
+
+
+fmla.iron.simple2 = as.formula(paste("Serum.iron ~ ", 
+                              paste0( c(g1.simple, g2.simple, g3.simple,
+                                        g4, g5, 'baseline.age'),
+                                      collapse = " + ")))
+
+
+m0 = lm(fmla.iron.simple2, data=mi.dat.fe.long[mi.dat.fe.long$.imp==2,]) # check imputation
+#summary(m0)
+#help(psfmi_lm)
+```
+
+```{r}
+# get imputed results without any variable/feature selection
+pool_lm_noselect <- psfmi_lm(data=mi.dat.fe.long, formula = fmla.iron.simple2, p.crit = 1, direction="BW",
+                             nimp=impute.set, impvar=".imp", method="RR")
+
+iron.coefs.mi = data.frame(pool_lm_noselect$RR_model_final[[1]]) # imputed step coefficients for tables
+iron.coefs.mi
+
+```
+
+
+```{r}
+# NOTE: psfmi does not do model performance or bootstrap internal validation for linear regression models....
+# to do this, will have to do myself
+
+# Source: https://www.gerkovink.com/miceVignettes/Combining_inferences/Combining_inferences.html
+
+set.seed(7327)
+# source: https://stackoverflow.com/questions/63049636/use-lapply-function-on-imputed-datasets-mice
+
+# function to create coefficients for table of original model in nested list format
+# first part of list returns the imputation and within each imputation is the bootstrap estimate, which needs to be combined within each imputation.
+# ======================================================================
+
+sink(file='deleteme.txt') # to suppress the output generated from the validate function
+model_list_nos = lapply(split(mi.dat.fe.long, mi.dat.fe.long$.imp), function(dat) {
+    m0.iron.simple <- ols(fmla.iron.simple,
+                          data = dat, x = TRUE, y = TRUE)
+    
+    v.iron = validate(m0.iron.simple, B=boot.set)
+    v.iron.out = data.frame(v.iron[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")])
+    v.iron.out$stat = rownames(v.iron.out)
+     v.iron.out$imp = unique(dat$.imp)
+    
+    return(data.frame(v.iron.out))
+    })
+sink()
+
+#str(model_list_nos)
+length(model_list_nos)
+
+fe.perf.nos.imputed = bind_rows(model_list_nos) # the bootstrapped performance statistic across imputations
+head(fe.perf.nos.imputed)
+
+
+# average across imputations
+# dplyr grouping not working. may be masked by other functions
+# try data.table
+# Source: https://stackoverflow.com/questions/11562656/calculate-the-mean-by-group
+
+fe.perf.nos.impute = as.data.frame(setDT(fe.perf.nos.imputed)[ , .(mean.orig = mean(index.orig), mean.opt = mean(optimism), mean.corrected = mean(index.corrected)), by = stat])
+
+fe.perf.nos.impute
+
+```
+
+
+```{r}
+
+# Pool results for this linear regression backwards selection model
+# head(mi.dat.fe.long)
+pool_lm <- psfmi_lm(data=mi.dat.fe.long, formula = fmla.iron.simple2, p.crit = 0.05, direction="BW",
+                    nimp=impute.set, impvar=".imp", method="RR")
+
+summary(pool_lm)
+pool_lm$multiparm_final
+fe.mi.bw.coef = pool_lm$RR_model_final # results from linear regression with multiple imputation and backward selection
+
+fe.mi.bw.coef
+
+iron.step.coefs.mi = as.data.frame(fe.mi.bw.coef)[,c(1,2)] # imputed step coefficients for tables
+class(iron.step.coefs.mi)
+
+
+```
+
+```{r}
+# NOTE: psfmi does not do model performance or bootstrap internal validation for linear regression models....
+# to do this, will have to do myself
+
+# https://www.gerkovink.com/miceVignettes/Combining_inferences/Combining_inferences.html
+
+# Source:
+set.seed(7327)
+#res_MI_boot <- psfmi_validate(pool_lm, val_method = "boot_MI", data_orig = lbp_orig, nboot = 5,
+#                     p.crit=0.05, nimp_mice = 5, direction = "BW", miceImp = miceImp,
+#                     printFlag = FALSE)
+
+# source: https://stackoverflow.com/questions/63049636/use-lapply-function-on-imputed-datasets-mice
+
+
+# function to create coefficients for table of original model in nested list format
+# first part of list returns the imputation and within each imputation is the bootstrap estimate, which needs to be combined within each imputation.
+# ======================================================================
+
+#  fmla.iron.simple # from chunk above.
+
+sink(file='deleteme.txt') # to suppress the output generated from the validate function
+model_list = lapply(split(mi.dat.fe.long, mi.dat.fe.long$.imp), function(dat) {
+    m0.iron.simple <- ols(fmla.iron.simple,
+                          data = dat, x = TRUE, y = TRUE)
+    v.iron2 = validate(m0.iron.simple, B=boot.set, bw=T) # only 2 bootstrap now for debugging. increase when done debugging
+    v.iron.out2 = data.frame(v.iron2[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")])
+  
+    v.iron.out2 = within(v.iron.out2, {
+      imp = unique(dat$.imp)
+      stat = rownames(v.iron.out2)
+    })
+    rownames(v.iron.out2) = NULL      
+    return(v.iron.out2)
+    })
+
+sink()
+
+str(model_list)
+length(model_list)
+
+fe.perf.imputed = bind_rows(model_list) # the bootstrapped performance statistic across imputations
+head(fe.perf.imputed)
+
+
+# average across imputations
+# dplyr grouping not working. may be masked by other functions
+# try data.table
+# Source: https://stackoverflow.com/questions/11562656/calculate-the-mean-by-group
+
+fe.perf.impute = as.data.frame(setDT(fe.perf.imputed)[ , .(mean.orig = mean(index.orig), mean.opt = mean(optimism), mean.corrected = mean(index.corrected)), by = stat])
+
+fe.perf.impute
+
+```
+
+
+### Elastic net selection model
+
+
+```{r}
+
+# Function to get validation bootstrapped R2
+
+# SOURCE: https://github.com/Ancamar/BootValidation/blob/master/R/parallel_vboot.R
+
+#' Internal bootstraping validation linear glmnet model
+#'
+#' @description Validate glmnet linear regression using bootstrap.
+#' @param fit Object from glmnet fit (NOTE: you have to specify alpha in this model for the function to work)
+#' @param x A matrix of the predictors, each row is an observation vector.
+#' @param y A vector of response variable. Should be numeric
+#' @param s Value of the penalty parameter "lambda" selected from the original 'cv.glmnet'
+#' @param gamma Value of "gamma" parameter selected for relaxed model
+#' @param nfolds Number of folds for cross validation as in 'cv.glmnet'
+#' @param B Number of bootsrap samples
+#' @param cv_replicates Number of replicates for the cross-validation step
+#' @param n_cores number of cores to use in parallel. Default detectCores()-1
+#' @importFrom glmnet cv.glmnet glmnet predict.glmnet
+#' @importFrom pROC roc
+#' @importFrom pbapply pbreplicate
+#' @importFrom stats median var coef
+#' @importFrom parallel parSapply makeCluster detectCores clusterExport stopCluster
+#' @export
+
+vboot.elnet <- function(fit, x, y, s, 
+                        gamma = NULL, nfolds = 5, B = 10, 
+                        cv_replicates = 100,
+                        n_cores = max(1, parallel::detectCores() - 1)){
+  
+  # fit = fit; x=x.matrix; y=y.matrix; s=cvfit$lambda.min; B=10;  # debug
+  
+    orig_predict <- glmnet::predict.glmnet(fit, newx = x, s=s, type = "response")
+    orig_r2 <- 1 - (var(orig_predict - y) / var(y))
+    
+    # Create index to bootstrap
+    bootstrap <- function(x, y, alpha = fit$call$alpha, nfolds = nfolds, B = B){
+        index <- sample(1:nrow(x), replace = TRUE)
+        xboot <- x[index, ]
+        yboot <- y[index]
+
+        # Fit the model using bootstrap dataset
+        cv.glmnet_b <- replicate(cv_replicates, glmnet::cv.glmnet(xboot, yboot, alpha =fit$call$alpha, 
+                                                                             family = "gaussian", 
+                                                                             nfolds = nfolds)$lambda.1se)
+        l <- median(cv.glmnet_b)
+        boot_fit <- glmnet::glmnet(xboot, yboot, alpha = fit$call$alpha, family = "gaussian")
+        boot_predict <- glmnet::predict.glmnet(boot_fit, newx = xboot, s = l, type = "response")
+        Cb_boot <- 1 - (var(boot_predict - yboot) / var(yboot))
+        #selected variables
+        var_sel <- names(coef(fit, s = s)[coef(fit, s = s)[,1] != 0,])[-1]
+
+        # fit bootstrap model to the original dataset
+        bootorig_predict <-  glmnet::predict.glmnet(boot_fit, newx = x, s = l, type = "response")
+        Cb_orig <- 1 - (var(bootorig_predict - y) / var(y))
+        return(list(Cb_boot = Cb_boot, Cb_orig = Cb_orig, var_sel = var_sel))
+    }
+    
+     if( n_cores > 1){
+        cl <- parallel::makeCluster(n_cores)
+        parallel::clusterExport(cl, varlist = c("B", "x", "y", "fit", "nfolds", "bootstrap"), envir = environment())
+        CBOOT <- parallel::parSapply(cl, 1:B, function(i)  bootstrap(x, y, alpha = fit$call$alpha, nfolds = nfolds))
+        parallel::stopCluster(cl)
+#        closeAllConnections() # see https://stackoverflow.com/questions/41372927/isincompletecon-error-when-knitting-pdf
+    }
+    else{
+#        CBOOT <- replicate(B, bootstrap(x, y, alpha = fit$call$alpha, nfolds = nfolds))
+        CBOOT <- suppressWarnings(pbapply::pbreplicate(B, bootstrap(x, y, alpha = fit$call$alpha, nfolds = nfolds)))
+    }
+    
+    
+
+  # Optimist
+    Optimisms <- as.numeric(stats::na.omit(unlist(CBOOT[1, ])) - stats::na.omit(unlist(CBOOT[2, ])))
+    eff_B <- length( stats::na.omit(unlist(CBOOT[2, ])))
+    O <- B^-1 * sum(unlist(CBOOT[1,]) - unlist(CBOOT[2, ]))
+    # Adjusted Optimist
+    Oadj <- as.numeric(orig_r2 - O)
+    #output
+    output <- list(params = round(data.frame(Original_R2 = as.numeric(orig_r2), Optimism = O, Validated_R2 = Oadj),3), 
+                   varImportance = CBOOT[3,],
+                   Effective_Bootstraps = eff_B,
+                   Optimisms = Optimisms)
+    class(output) <- "bootVal"
+    return(output)
+
+}
+
+```
+
+```{r}
+
+# get covariates ready
+x.matrix = as.matrix(s2.dat.nomiss[,c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs, 'baseline.age')])
+head(x.matrix)
+
+# get outcome variable ready
+names(s2.dat.nomiss)
+y.matrix.fe = as.matrix(scale(s2.dat.nomiss[,"Serum.iron"]))
+head(y.matrix.fe)
+
+# source: https://glmnet.stanford.edu/articles/glmnet.html
+
+fit = glmnet(x.matrix, y.matrix.fe)
+#plot(fit)
+#print(fit)
+
+# Fit model with selection via cv
+cvfit <- cv.glmnet(x.matrix, y.matrix.fe)
+plot(cvfit)
+cvfit$lambda.min
+coef(cvfit, s = "lambda.min")
+cvfit$lambda[which(cvfit$lambda==cvfit$lambda.min)]
+
+# R2
+# Source: https://stackoverflow.com/questions/50610895/how-to-calculate-r-squared-value-for-lasso-regression-using-glmnet-in-r
+
+rsq = 1 - cvfit$cvm/var(as.vector(y.matrix.fe))
+plot(cvfit$lambda,rsq)
+
+rsq.min = rsq[which(cvfit$lambda==cvfit$lambda.min)]
+rsq.min
+
+# bootstrap validation
+# source: https://www.rdocumentation.org/packages/BootValidation/versions/0.1.65
+# NOTE: this does not work with my current version of R. Cut and pasted the function I found on github. See below.
+
+```
+
+
+```{r, eval=F}
+
+# Pick the correct alpha
+# SOURCE: adapted from https://clinicalepigeneticsjournal.biomedcentral.com/articles/10.1186/s13148-019-0730-1#MOESM1
+
+# Set a seed so that the results can be reproduced
+set.seed( 54201 )
+
+foldid=sample(1:10,size=length(y.matrix.fe),replace=TRUE)
+
+cv1 = cv.glmnet(x=x.matrix, y=y.matrix.fe, foldid=foldid,alpha=1)
+cv075 = cv.glmnet(x=x.matrix, y=y.matrix.fe, foldid=foldid,alpha=0.75)
+cv05 = cv.glmnet(x=x.matrix, y=y.matrix.fe, foldid=foldid,alpha=0.5)
+cv025 = cv.glmnet(x=x.matrix, y=y.matrix.fe, foldid=foldid,alpha=0.25)
+cv0 = cv.glmnet(x=x.matrix, y=y.matrix.fe, foldid=foldid,alpha=0)
+
+# Plot
+par(mfrow=c(2,3))
+plot(cv1);plot(cv075);plot(cv05);plot(cv025);plot(cv0)
+plot(log(cv1$lambda),cv1$cvm,pch=19,col="red",xlab="log(Lambda)",ylab=cv1$name)
+points(log(cv05$lambda),cv05$cvm,pch=19,col="grey")
+points(log(cv0$lambda),cv0$cvm,pch=19,col="blue")
+points(log(cv075$lambda),cv075$cvm,pch=19,col="orange")
+points(log(cv025$lambda),cv025$cvm,pch=19,col="green")
+legend("topleft",legend=c("alpha= 1", "alpha= .75", "alpha= .5", "alpha= .25", "alpha= 0"),pch=19,col=c("red", "orange", "grey", "green", "blue"))
+
+# lasso does best (alpha = 1)
+
+```
+
+
+```{r}
+
+fit.iron.glm = glmnet(x.matrix, y.matrix.fe, alpha=1) # NOTE: you have to specify the alpha for the bootstrap function to work.
+summary(fit.iron.glm)
+
+vboot.iron = vboot.elnet(fit=fit.iron.glm, x=x.matrix, y=y.matrix.fe, s=cvfit$lambda.min,
+            gamma = NULL, nfolds = 5, B = boot.set, 
+            cv_replicates = 10)
+
+names(vboot.iron)
+
+# original and corrected R2 to go in table
+vboot.iron$params
+mean(vboot.iron$Optimisms)
+
+# get coefficients for model with min lambda
+fit.iron.glm.cv <- cv.glmnet(x.matrix, y.matrix.fe, alpha=1)
+fit.iron.glm.cv$lambda.min
+
+# parameters to go in table
+iron.glmnet.coefs = coef(fit.iron.glm.cv, s = "lambda.min")
+
+```
+
+
+
+```{r}
+
+# To use multiple imputation we can use the miselect package in R: https://cran.r-project.org/web/packages/miselect/
+# The paper has just been published: https://doi.org/10.1080/10618600.2022.2035739
+# this incorporation of missing data into lasso estimates, is not well established.
+
+# code below copies vignette here: https://cran.r-project.org/web/packages/miselect/vignettes/miselect.html
+
+# mi data from above for the bw selection model: mi.dat.fe 
+set.seed(185856)
+mids = mi.dat.fe
+
+colMeans(is.na(s2.dat.iron))
+# overall the missing per variable not too bad (<5%) except for polyps
+prop.table(table(complete.cases(s2.dat.iron)))
+# if you combine all missing you go up to 17% that are not complete cases and have at least one missing
+
+# Generate list of completed data.frames
+dfs <- lapply(1:impute.set, function(i) complete(mids, action = i))
+
+head(dfs[[1]]) # check
+
+# Generate list of imputed design matrices and imputed responses
+x <- list()
+y <- list()
+for (i in 1:impute.set) {
+    x[[i]] <- as.matrix(dfs[[i]][, c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)])
+    y[[i]] <- dfs[[i]][,"Serum.iron"]
+}
+
+# Calculate observational weights
+weights  <- 1 - rowMeans(is.na(s2.dat.iron))
+pf       <- rep(1, length(c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)))
+adWeight <- rep(1, length(c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)))
+alpha    <- c(.5 , 1)
+
+
+# Since 'Y' is a continuous variable, we use 'family = "gaussian"'
+fit <- cv.saenet(x, y, pf, adWeight, weights, family = "gaussian",
+                 alpha = alpha, nfolds = 5)
+
+# By default 'coef' returns the betas for (lambda.min , alpha.min)
+# parameters to go in table
+iron.glmnet.coefs.mi = coef(fit)
+
+
+```
+
+
+## Ferritin
+
+```{r}
+
+fmla.ferritin <- as.formula(paste("scale(log(Serum.ferritin)) ~ ", 
+                                  paste0( c(g1, g2, g3, g4, g5, "rcs(baseline.age)"),
+                                          collapse = " + ")))
+
+fmla.ferritin.simple = as.formula(paste("scale(log(Serum.ferritin)) ~ ", 
+                              paste0( c(g1.simple, g2.simple, g3.simple,
+                                        g4, g5, "scale(baseline.age, scale=F)"),
+                                      collapse = " + ")))
+
+m0.ferritin <-  ols(fmla.ferritin,
+                     data = s2.dat, x = TRUE, y = TRUE)
+
+m0.ferritin.simple <-  ols(fmla.ferritin.simple,
+                    data = s2.dat, x = TRUE, y = TRUE)
+
+print(m0.ferritin, coef = FALSE)
+anova(m0.ferritin)
+plot(anova(m0.ferritin))
+m0.ferritin.simple$stats["R2"]
+m0.ferritin$stats["R2"]
+
+v.ferritin.simple = validate(m0.ferritin.simple, B=1000)
+v.ferritin.simple
+
+v.ferritin = validate(m0.ferritin, B=1000)
+v.ferritin
+
+v.ferritin.out = v.ferritin[c("R-square", "Intercept", "Slope"), 
+                            c("index.orig", "optimism", "index.corrected")]
+v.ferritin.out
+
+
+# create coefficients for table
+# ==============================
+
+dat.coef.ferritin = data.frame(coef(summary.lm(m0.ferritin.simple)))
+dat.coef.ferritin
+
+dat.coef.ferritin$est.ci = with(dat.coef.ferritin, paste0(format(round(Estimate, 3), nsmall=3),
+                                                    " (",
+                                                    format(round(Estimate - 1.96*Std..Error, 3), nsmall=3),
+                                                    ", ",
+                                                    format(round(Estimate + 1.96*Std..Error, 3), nsmall=3),
+                                                    ")"))
+dat.coef.ferritin
+
+```
+
+
+
+### Internal validation for stepwise model
+
+```{r}
+
+v.ferritin2 = validate(m0.ferritin.simple, B=1000, bw=T)
+colnames(v.ferritin2)
+rownames(v.ferritin2)
+
+v.ferritin.out2 = v.ferritin2[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")]
+v.ferritin.out2
+
+# create coefficients for table of original model
+# ==============================
+
+m0.ferritin.simple.step = fastbw(m0.ferritin.simple)
+print(m0.ferritin.simple.step, digits=4)
+m0.ferritin.simple.step$parms.kept
+
+step.ferritin.coefs = m0.ferritin.simple.step$coefficients
+
+ferritin.step.coefs = as.data.frame(m0.ferritin.simple.step$coefficients)
+
+```
+
+
+
+```{r}
+
+# stepwise with multiple imputation
+
+s2.dat.ferritin = s2.dat[!(is.na(s2.dat$Serum.ferritin)), c("Serum.ferritin",covs,'baseline.age'),] 
+summary(log(s2.dat.ferritin$Serum.ferritin))
+
+s2.dat.ferritin$Serum.ferritin = as.numeric(scale(log(s2.dat.ferritin$Serum.ferritin))) 
+
+# impute data
+set.seed(7327)
+#head(s2.dat.ferritin)
+# Source: https://www.gerkovink.com/miceVignettes/Passive_Post_processing/Passive_imputation_post_processing.html
+ini <- mice(s2.dat.ferritin, maxit=0, print=F)
+pred <- ini$pred
+pred
+
+# take serum iron out of predictor matrix for mice, do not want to use outcome in predicting predictor matrix
+pred["Serum.ferritin",]=0
+pred
+
+meth<- ini$meth
+meth # looks reasonable
+
+mi.dat.fertn <- mice(s2.dat.ferritin, m=impute.set, meth=meth, pred=pred, maxit=10, seed=123, print=F) # increase iterations, now m=2, once debugging done
+mi.dat.fertn
+
+# Source: https://www.gerkovink.com/miceVignettes/Ad_hoc_and_mice/Ad_hoc_methods.html
+# https://stefvanbuuren.name/fimd/sec-howmany.html
+mi.dat.fertn.long = complete(mi.dat.fertn, "long")
+summary(mi.dat.fertn.long)
+head(mi.dat.fertn.long)
+table(mi.dat.fertn.long$blood.don.12mos)
+table(mi.dat.fertn.long$.imp)  # check
+
+fmla.fertn.simple2 = as.formula(paste("Serum.ferritin ~ ", 
+                              paste0( c(g1.simple, g2.simple, g3.simple,
+                                        g4, g5, 'baseline.age'),
+                                      collapse = " + ")))
+
+
+m0 = lm(fmla.fertn.simple2, data=mi.dat.fertn.long[mi.dat.fe.long$.imp==2,]) # check imputation
+#summary(m0)
+#help(psfmi_lm)
+```
+
+
+
+```{r}
+# get imputed results without any variable/feature selection
+pool_lm_noselect <- psfmi_lm(data=mi.dat.fertn.long, formula = fmla.fertn.simple2, p.crit = 1, direction="BW",
+                             nimp=impute.set, impvar=".imp", method="RR")
+
+fertn.coefs.mi = data.frame(pool_lm_noselect$RR_model_final[[1]]) # imputed step coefficients for tables
+fertn.coefs.mi
+
+```
+
+
+
+```{r}
+# NOTE: psfmi does not do model performance or bootstrap internal validation for linear regression models....
+# to do this, will have to do myself
+
+# Source: https://www.gerkovink.com/miceVignettes/Combining_inferences/Combining_inferences.html
+
+set.seed(7327)
+# source: https://stackoverflow.com/questions/63049636/use-lapply-function-on-imputed-datasets-mice
+
+# function to create coefficients for table of original model in nested list format
+# first part of list returns the imputation and within each imputation is the bootstrap estimate, which needs to be combined within each imputation.
+# ======================================================================
+
+sink(file='deleteme.txt') # to suppress the output generated from the validate function
+model_list_nos = lapply(split(mi.dat.fertn.long, mi.dat.fertn.long$.imp), function(dat) {
+    m0.fertn.simple <- ols(fmla.fertn.simple2,
+                          data = dat, x = TRUE, y = TRUE)
+    
+    v.fertn = validate(m0.fertn.simple, B=boot.set)
+    v.fertn.out = data.frame(v.fertn[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")])
+    v.fertn.out$stat = rownames(v.fertn.out)
+     v.fertn.out$imp = unique(dat$.imp)
+    
+    return(data.frame(v.fertn.out))
+    })
+sink()
+
+#str(model_list_nos)
+length(model_list_nos)
+
+fertn.perf.nos.imputed = bind_rows(model_list_nos) # the bootstrapped performance statistic across imputations
+head(fertn.perf.nos.imputed)
+
+
+# average across imputations
+# dplyr grouping not working. may be masked by other functions
+# try data.table
+# Source: https://stackoverflow.com/questions/11562656/calculate-the-mean-by-group
+
+fertn.perf.nos.impute = as.data.frame(setDT(fertn.perf.nos.imputed)[ , .(mean.orig = mean(index.orig), mean.opt = mean(optimism), mean.corrected = mean(index.corrected)), by = stat])
+
+fertn.perf.nos.impute
+
+```
+
+```{r}
+
+# Pool results for this linear regression backwards selection model
+#head(mi.dat.fe.long)
+pool_lm <- psfmi_lm(data=mi.dat.fertn.long, formula = fmla.fertn.simple2, p.crit = 0.05, direction="BW",
+                    nimp=impute.set, impvar=".imp", method="RR")
+
+summary(pool_lm)
+pool_lm$multiparm_final
+fertn.mi.bw.coef = pool_lm$RR_model_final # results from linear regression with multiple imputation and backward selection
+
+fertn.mi.bw.coef
+
+fertn.step.coefs.mi = as.data.frame(fertn.mi.bw.coef)[,c(1,2)] # for tables
+
+```
+
+```{r}
+# NOTE: psfmi does not do model performance or bootstrap internal validation for linear regression models....
+# to do this, will have to do myself
+
+# https://www.gerkovink.com/miceVignettes/Combining_inferences/Combining_inferences.html
+
+# Source:
+set.seed(7327)
+#res_MI_boot <- psfmi_validate(pool_lm, val_method = "boot_MI", data_orig = lbp_orig, nboot = 5,
+#                     p.crit=0.05, nimp_mice = 5, direction = "BW", miceImp = miceImp,
+#                     printFlag = FALSE)
+
+# source: https://stackoverflow.com/questions/63049636/use-lapply-function-on-imputed-datasets-mice
+
+
+# function to create coefficients for table of original model in nested list format
+# first part of list returns the imputation and within each imputation is the bootstrap estimate, which needs to be combined within each imputation.
+# ======================================================================
+
+#  fmla.iron.simple # from chunk above.
+
+sink(file='deleteme.txt') # to suppress the output generated from the validate function
+model_list = lapply(split(mi.dat.fertn.long, mi.dat.fertn.long$.imp), function(dat) {
+    m0.fertn.simple <- ols(fmla.fertn.simple2,
+                          data = dat, x = TRUE, y = TRUE)
+    v.fertn2 = validate(m0.fertn.simple, B=boot.set, bw=T) # only 2 bootstrap now for debugging. increase when done debugging
+    v.fertn.out2 = data.frame(v.fertn2[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")])
+  
+    v.fertn.out2 = within(v.fertn.out2, {
+      imp = unique(dat$.imp)
+      stat = rownames(v.fertn.out2)
+    })
+    rownames(v.fertn.out2) = NULL      
+    return(v.fertn.out2)
+    })
+
+sink()
+
+str(model_list)
+length(model_list)
+
+fertn.perf.imputed = bind_rows(model_list) # the bootstrapped performance statistic across imputations
+head(fertn.perf.imputed)
+
+
+# average across imputations
+# dplyr grouping not working. may be masked by other functions
+# try data.table
+# Source: https://stackoverflow.com/questions/11562656/calculate-the-mean-by-group
+
+fertn.perf.impute = as.data.frame(setDT(fertn.perf.imputed)[ , .(mean.orig = mean(index.orig), mean.opt = mean(optimism), mean.corrected = mean(index.corrected)), by = stat])
+
+fertn.perf.impute
+
+```
+
+
+
+### Elastic net estimates
+
+```{r}
+
+# Look at elastic net estimates
+# initial work
+
+x.matrix = as.matrix(s2.dat.nomiss[,c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs, "baseline.age")])
+head(x.matrix)
+
+y.matrix.fertn = as.matrix(scale(log(s2.dat.nomiss[,"Serum.ferritin"])))
+head(y.matrix.fertn)
+
+# source: https://glmnet.stanford.edu/articles/glmnet.html
+
+fit = glmnet(x.matrix, y.matrix.fertn)
+plot(fit)
+print(fit)
+
+cvfit <- cv.glmnet(x.matrix, y.matrix.fertn)
+plot(cvfit)
+cvfit$lambda.min
+coef(cvfit, s = "lambda.min")
+cvfit$lambda[which(cvfit$lambda==cvfit$lambda.min)]
+
+# r2
+# Source: https://stackoverflow.com/questions/50610895/how-to-calculate-r-squared-value-for-lasso-regression-using-glmnet-in-r
+
+rsq = 1 - cvfit$cvm/var(as.vector(y.matrix.fertn))
+plot(cvfit$lambda,rsq)
+
+rsq.min = rsq[which(cvfit$lambda==cvfit$lambda.min)]
+rsq.min
+```
+
+
+
+```{r, eval=F}
+
+# Pick the correct alpha
+# SOURCE: adapted from https://clinicalepigeneticsjournal.biomedcentral.com/articles/10.1186/s13148-019-0730-1#MOESM1
+
+# Set a seed so that the results can be reproduced
+set.seed( 54201 )
+
+foldid=sample(1:10,size=length(y.matrix.fertn),replace=TRUE)
+
+cv1 = cv.glmnet(x=x.matrix, y=y.matrix.fertn, foldid=foldid,alpha=1)
+cv075 = cv.glmnet(x=x.matrix, y=y.matrix.fertn, foldid=foldid,alpha=0.75)
+cv05 = cv.glmnet(x=x.matrix, y=y.matrix.fertn, foldid=foldid,alpha=0.5)
+cv025 = cv.glmnet(x=x.matrix, y=y.matrix.fertn, foldid=foldid,alpha=0.25)
+cv0 = cv.glmnet(x=x.matrix, y=y.matrix.fertn, foldid=foldid,alpha=0)
+
+# Plot
+par(mfrow=c(2,3))
+plot(cv1);plot(cv075);plot(cv05);plot(cv025);plot(cv0)
+plot(log(cv1$lambda),cv1$cvm,pch=19,col="red",xlab="log(Lambda)",ylab=cv1$name)
+points(log(cv05$lambda),cv05$cvm,pch=19,col="grey")
+points(log(cv0$lambda),cv0$cvm,pch=19,col="blue")
+points(log(cv075$lambda),cv075$cvm,pch=19,col="orange")
+points(log(cv025$lambda),cv025$cvm,pch=19,col="green")
+legend("topleft",legend=c("alpha= 1", "alpha= .75", "alpha= .5", "alpha= .25", "alpha= 0"),pch=19,col=c("red", "orange", "grey", "green", "blue"))
+
+# lasso does best (alpha = 1)
+
+```
+
+
+
+```{r}
+
+fit.ferritin.glm = glmnet(x.matrix, y.matrix.fertn, alpha=1)
+
+vboot.ferritin = vboot.elnet(fit=fit.ferritin.glm, x=x.matrix, y=y.matrix.fertn, s=cvfit$lambda.min,
+            gamma = NULL, nfolds = 5, B = boot.set, 
+            cv_replicates = 10)
+
+names(vboot.ferritin)
+
+# original and corrected R2 to go in table
+vboot.ferritin$params
+mean(vboot.ferritin$Optimisms)
+
+# get coefficients for model with min lambda
+fit.ferritin.glm.cv <- cv.glmnet(x.matrix, y.matrix.fertn, alpha=1)
+fit.ferritin.glm.cv$lambda.min
+
+# parameters to go in table
+ferritin.glmnet.coefs = coef(fit.ferritin.glm.cv, s = "lambda.min")
+class(ferritin.glmnet.coefs)
+
+```
+
+
+
+```{r}
+
+# To use multiple imputation we can use the miselect package in R: https://cran.r-project.org/web/packages/miselect/
+# The paper has just been published: https://doi.org/10.1080/10618600.2022.2035739
+# this incorporation of missing data into lasso estimates, is not well established.
+
+# code below copies vignette here: https://cran.r-project.org/web/packages/miselect/vignettes/miselect.html
+
+# mi data from above for the bw selection model: mi.dat.fe 
+set.seed(185856)
+mids = mi.dat.fertn
+
+colMeans(is.na(s2.dat.ferritin))
+# overall the missing per variable not too bad (<5%) except for polyps
+prop.table(table(complete.cases(s2.dat.ferritin)))
+# if you combine all missing you go up to 17% that are not complete cases and have at least one missing
+
+# Generate list of completed data.frames
+dfs <- lapply(1:impute.set, function(i) complete(mids, action = i))
+
+head(dfs[[1]]) # check
+
+# Generate list of imputed design matrices and imputed responses
+x <- list()
+y <- list()
+for (i in 1:impute.set) {
+    x[[i]] <- as.matrix(dfs[[i]][, c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)])
+    y[[i]] <- dfs[[i]][,"Serum.ferritin"]
+}
+
+# Calculate observational weights
+weights  <- 1 - rowMeans(is.na(s2.dat.ferritin))
+pf       <- rep(1, length(c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)))
+adWeight <- rep(1, length(c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)))
+alpha    <- c(.5 , 1)
+
+
+# Since 'Y' is a continuous variable, we use 'family = "gaussian"'
+fit <- cv.saenet(x, y, pf, adWeight, weights, family = "gaussian",
+                 alpha = alpha, nfolds = 5)
+
+# By default 'coef' returns the betas for (lambda.min , alpha.min)
+# parameters to go in table
+fertn.glmnet.coefs.mi = coef(fit)
+fertn.glmnet.coefs.mi
+
+```
+
+## Transferrin saturation
+
+```{r}
+
+fmla.fesat <- as.formula(paste("scale(Serum.fesat) ~ ", 
+                               paste0( c(g1, g2, g3, g4, g5, "rcs(baseline.age)"),
+                                       collapse = " + ")))
+
+fmla.fesat.simple = as.formula(paste("scale(Serum.fesat) ~ ", 
+                              paste0( c(g1.simple, g2.simple, g3.simple,
+                                        g4, g5, "scale(baseline.age, scale=F)"), 
+                                      collapse = " + ")))
+
+m0.fesat <-  ols(fmla.fesat,
+          data = s2.dat, x = TRUE, y = TRUE)
+m0.fesat$stats["R2"]
+
+m0.fesat.simple <-  ols(fmla.fesat.simple,
+          data = s2.dat, x = TRUE, y = TRUE)
+m0.fesat.simple$stats["R2"]
+
+print(m0.fesat, coef = FALSE)
+
+anova(m0.fesat)
+plot(anova(m0.fesat))
+
+v.fesat = validate(m0.fesat, B=1000)
+v.fesat
+
+v.fesat.out = v.fesat[c("R-square", "Intercept", "Slope"), 
+                      c("index.orig", "optimism", "index.corrected")]
+v.fesat.out
+
+
+# create coefficients for table
+# ==============================
+
+dat.coef.fesat = data.frame(coef(summary.lm(m0.fesat.simple)))
+dat.coef.fesat
+
+dat.coef.fesat$est.ci = with(dat.coef.fesat, paste0(format(round(Estimate, 3), nsmall=3),
+                                                    " (",
+                                                    format(round(Estimate - 1.96*Std..Error, 3), nsmall=3),
+                                                    ", ",
+                                                    format(round(Estimate + 1.96*Std..Error, 3), nsmall=3),
+                                                    ")"))
+dat.coef.fesat
+
+```
+
+### Internal validation for stepwise model
+
+```{r}
+
+v.fesat2 = validate(m0.fesat.simple, B=1000, bw=T)
+colnames(v.fesat2)
+rownames(v.fesat2)
+
+v.fesat.out2 = v.fesat2[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")]
+v.fesat.out2
+
+# create coefficients for table of original model
+# ===============================================
+
+m0.fesat.simple.step = fastbw(m0.fesat.simple)
+print(m0.fesat.simple.step, digits=4)
+m0.fesat.simple.step$parms.kept
+
+step.fesat.coefs = m0.fesat.simple.step$coefficients
+fesat.step.coefs = as.data.frame(m0.fesat.simple.step$coefficients)
+names(m0.fesat.simple.step)
+class(m0.fesat.simple.step$coefficients)
+round(m0.fesat.simple.step$coefficients, 2)
+
+```
+
+```{r}
+
+# stepwise with multiple imputation
+summary(s2.dat$Serum.fesat)
+s2.dat.fesat = s2.dat[!(is.na(s2.dat$Serum.fesat)), c("Serum.fesat",covs,'baseline.age'),] 
+summary(s2.dat.fesat$Serum.fesat)
+
+s2.dat.fesat$Serum.fesat = as.numeric(scale(s2.dat.fesat$Serum.fesat))
+
+# impute data
+set.seed(7327)
+#head(s2.dat.fesat)
+# Source: https://www.gerkovink.com/miceVignettes/Passive_Post_processing/Passive_imputation_post_processing.html
+ini <- mice(s2.dat.fesat, maxit=0, print=F)
+pred <- ini$pred
+pred
+
+# take serum iron out of predictor matrix for mice, do not want to use outcome in predicting predictor matrix
+pred["Serum.fesat",]=0
+pred
+
+meth<- ini$meth
+meth # looks reasonable
+
+mi.dat.fesat <- mice(s2.dat.fesat, m=impute.set, meth=meth, pred=pred, maxit=10, seed=123, print=F) # increase iterations, now m=2, once debugging done
+mi.dat.fesat
+
+# Source: https://www.gerkovink.com/miceVignettes/Ad_hoc_and_mice/Ad_hoc_methods.html
+# https://stefvanbuuren.name/fimd/sec-howmany.html
+mi.dat.fesat.long = complete(mi.dat.fesat, "long")
+summary(mi.dat.fesat.long)
+head(mi.dat.fesat.long)
+table(mi.dat.fesat.long$blood.don.12mos)
+table(mi.dat.fesat.long$.imp)  # check
+
+fmla.fesat.simple2 = as.formula(paste("Serum.fesat ~ ", 
+                              paste0( c(g1.simple, g2.simple, g3.simple,
+                                        g4, g5, 'baseline.age'),
+                                      collapse = " + ")))
+
+
+m0 = lm(fmla.fesat.simple2, data=mi.dat.fesat.long[mi.dat.fe.long$.imp==2,]) # check imputation
+#summary(m0)
+#help(psfmi_lm)
+```
+
+
+
+```{r}
+# get imputed results without any variable/feature selection
+pool_lm_noselect <- psfmi_lm(data=mi.dat.fesat.long, formula = fmla.fesat.simple2, p.crit = 1, direction="BW",
+                             nimp=impute.set, impvar=".imp", method="RR")
+
+fesat.coefs.mi = data.frame(pool_lm_noselect$RR_model_final[[1]]) # imputed step coefficients for tables
+fesat.coefs.mi
+
+```
+
+
+
+```{r}
+# NOTE: psfmi does not do model performance or bootstrap internal validation for linear regression models....
+# to do this, will have to do myself
+
+# Source: https://www.gerkovink.com/miceVignettes/Combining_inferences/Combining_inferences.html
+
+set.seed(7327)
+# source: https://stackoverflow.com/questions/63049636/use-lapply-function-on-imputed-datasets-mice
+
+# function to create coefficients for table of original model in nested list format
+# first part of list returns the imputation and within each imputation is the bootstrap estimate, which needs to be combined within each imputation.
+# ======================================================================
+
+sink(file='deleteme.txt') # to suppress the output generated from the validate function
+model_list_nos = lapply(split(mi.dat.fesat.long, mi.dat.fesat.long$.imp), function(dat) {
+    m0.fesat.simple <- ols(fmla.fesat.simple2,
+                          data = dat, x = TRUE, y = TRUE)
+    
+    v.fesat = validate(m0.fesat.simple, B=1000)
+    v.fesat.out = data.frame(v.fesat[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")])
+    v.fesat.out$stat = rownames(v.fesat.out)
+     v.fesat.out$imp = unique(dat$.imp)
+    
+    return(data.frame(v.fesat.out))
+    })
+sink()
+
+#str(model_list_nos)
+length(model_list_nos)
+
+fesat.perf.nos.imputed = bind_rows(model_list_nos) # the bootstrapped performance statistic across imputations
+head(fesat.perf.nos.imputed)
+
+
+# average across imputations
+# dplyr grouping not working. may be masked by other functions
+# try data.table
+# Source: https://stackoverflow.com/questions/11562656/calculate-the-mean-by-group
+
+fesat.perf.nos.impute = as.data.frame(setDT(fesat.perf.nos.imputed)[ , .(mean.orig = mean(index.orig), mean.opt = mean(optimism), mean.corrected = mean(index.corrected)), by = stat])
+
+fesat.perf.nos.impute
+
+```
+
+```{r}
+
+# Pool results for this linear regression backwards selection model
+#head(mi.dat.fe.long)
+pool_lm <- psfmi_lm(data=mi.dat.fesat.long, formula = fmla.fesat.simple2, p.crit = 0.05, direction="BW",
+                    nimp=impute.set, impvar=".imp", method="RR")
+
+summary(pool_lm)
+pool_lm$multiparm_final
+fesat.mi.bw.coef = pool_lm$RR_model_final # results from linear regression with multiple imputation and backward selection
+
+fesat.mi.bw.coef
+
+fesat.step.coefs.mi = as.data.frame(fesat.mi.bw.coef)[,c(1,2)] # for tables
+
+```
+
+```{r}
+# NOTE: psfmi does not do model performance or bootstrap internal validation for linear regression models....
+# to do this, will have to do myself
+
+# https://www.gerkovink.com/miceVignettes/Combining_inferences/Combining_inferences.html
+
+# Source:
+set.seed(7327)
+#res_MI_boot <- psfmi_validate(pool_lm, val_method = "boot_MI", data_orig = lbp_orig, nboot = 5,
+#                     p.crit=0.05, nimp_mice = 5, direction = "BW", miceImp = miceImp,
+#                     printFlag = FALSE)
+
+# source: https://stackoverflow.com/questions/63049636/use-lapply-function-on-imputed-datasets-mice
+
+
+# function to create coefficients for table of original model in nested list format
+# first part of list returns the imputation and within each imputation is the bootstrap estimate, which needs to be combined within each imputation.
+# ======================================================================
+
+#  fmla.fesat.simple # from chunk above.
+
+sink(file='deleteme.txt') # to suppress the output generated from the validate function
+model_list = lapply(split(mi.dat.fesat.long, mi.dat.fesat.long$.imp), function(dat) {
+    m0.fesat.simple <- ols(fmla.fesat.simple2,
+                          data = dat, x = TRUE, y = TRUE)
+    v.fesat2 = validate(m0.fesat.simple, B=boot.set, bw=T) # only 2 bootstrap now for debugging. increase when done debugging
+    v.fesat.out2 = data.frame(v.fesat2[c("R-square", "Intercept", "Slope"), c("index.orig", "optimism", "index.corrected")])
+  
+    v.fesat.out2 = within(v.fesat.out2, {
+      imp = unique(dat$.imp)
+      stat = rownames(v.fesat.out2)
+    })
+    rownames(v.fesat.out2) = NULL      
+    return(v.fesat.out2)
+    })
+
+sink()
+
+str(model_list)
+length(model_list)
+
+fesat.perf.imputed = bind_rows(model_list) # the bootstrapped performance statistic across imputations
+head(fesat.perf.imputed)
+
+
+# average across imputations
+# dplyr grouping not working. may be masked by other functions
+# try data.table
+# Source: https://stackoverflow.com/questions/11562656/calculate-the-mean-by-group
+
+fesat.perf.impute = as.data.frame(setDT(fesat.perf.imputed)[ , .(mean.orig = mean(index.orig), mean.opt = mean(optimism), mean.corrected = mean(index.corrected)), by = stat])
+
+fesat.perf.impute
+
+```
+
+
+### Elastic net estimates
+
+```{r}
+
+# Look at elastic net estimates
+# initial work
+
+x.matrix = as.matrix(s2.dat.nomiss[,c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs, "baseline.age")])
+head(x.matrix)
+
+y.matrix.fesat = as.matrix(scale(s2.dat.nomiss[,"Serum.fesat"]))
+head(y.matrix.fesat)
+
+# source: https://glmnet.stanford.edu/articles/glmnet.html
+
+fit = glmnet(x.matrix, y.matrix.fesat)
+plot(fit)
+print(fit)
+
+cvfit <- cv.glmnet(x.matrix, y.matrix.fesat)
+plot(cvfit)
+cvfit$lambda.min
+coef(cvfit, s = "lambda.min")
+cvfit$lambda[which(cvfit$lambda==cvfit$lambda.min)]
+
+# r2
+# Source: https://stackoverflow.com/questions/50610895/how-to-calculate-r-squared-value-for-lasso-regression-using-glmnet-in-r
+
+rsq = 1 - cvfit$cvm/var(as.vector(y.matrix.fesat))
+plot(cvfit$lambda,rsq)
+
+rsq.min = rsq[which(cvfit$lambda==cvfit$lambda.min)]
+rsq.min
+
+```
+
+```{r}
+
+# Look at pairwise interactions
+# Source: https://stackoverflow.com/questions/27580267/how-to-make-all-interactions-before-using-glmnet
+# =============================================================================
+
+# First step: using .*. for all interactions
+f <- as.formula(y ~ .*.)
+y = as.numeric(y.matrix.fesat)
+x = as.data.frame(x.matrix)
+# Second step: using model.matrix to take advantage of f
+x.matrix2 <- model.matrix(f, x)[, -1]
+head(x.matrix2)
+class(x.matrix2)
+
+fit2 = glmnet(as.matrix(x), y)
+cvfit2 = cv.glmnet(as.matrix(x.matrix2),y)
+
+cvfit2$lambda.min
+coef(cvfit2, s = "lambda.min")
+
+rsq2 = 1 - cvfit2$cvm/var(as.vector(y))
+plot(cvfit2$lambda,rsq2)
+
+rsq.min2 = rsq2[which(cvfit2$lambda==cvfit2$lambda.min)]
+rsq.min2
+
+
+```
+
+
+
+```{r, eval=F}
+
+# Pick the correct alpha
+# SOURCE: adapted from https://clinicalepigeneticsjournal.biomedcentral.com/articles/10.1186/s13148-019-0730-1#MOESM1
+
+# Set a seed so that the results can be reproduced
+set.seed( 54201 )
+
+foldid=sample(1:10,size=length(y.matrix.fesat),replace=TRUE)
+
+cv1 = cv.glmnet(x=x.matrix, y=y.matrix.fesat, foldid=foldid, alpha=1)
+cv075 = cv.glmnet(x=x.matrix, y=y.matrix.fesat, foldid=foldid,alpha=0.75)
+cv05 = cv.glmnet(x=x.matrix, y=y.matrix.fesat, foldid=foldid,alpha=0.5)
+cv025 = cv.glmnet(x=x.matrix, y=y.matrix.fesat, foldid=foldid,alpha=0.25)
+cv0 = cv.glmnet(x=x.matrix, y=y.matrix.fesat, foldid=foldid,alpha=0)
+
+# Plot
+par(mfrow=c(2,3))
+plot(cv1);plot(cv075);plot(cv05);plot(cv025);plot(cv0)
+plot(log(cv1$lambda),cv1$cvm,pch=19,col="red",xlab="log(Lambda)",ylab=cv1$name)
+points(log(cv05$lambda),cv05$cvm,pch=19,col="grey")
+points(log(cv0$lambda),cv0$cvm,pch=19,col="blue")
+points(log(cv075$lambda),cv075$cvm,pch=19,col="orange")
+points(log(cv025$lambda),cv025$cvm,pch=19,col="green")
+legend("topleft",legend=c("alpha= 1", "alpha= .75", "alpha= .5", "alpha= .25", "alpha= 0"),pch=19,col=c("red", "orange", "grey", "green", "blue"))
+
+# lasso does best (alpha = 1)
+
+```
+
+
+
+```{r}
+
+fit.fesat.glm = glmnet(x.matrix, y.matrix.fesat, alpha=1)
+
+vboot.fesat = vboot.elnet(fit=fit.fesat.glm, x=x.matrix, y=y.matrix.fesat, s=cvfit$lambda.min,
+            gamma = NULL, nfolds = 5, B = boot.set, 
+            cv_replicates = 10)
+
+# original and corrected R2 to go in table
+vboot.fesat$params
+mean(vboot.fesat$Optimisms)
+
+# get coefficients for model with min lambda
+fit.fesat.glm.cv <- cv.glmnet(x.matrix, y.matrix.fesat, alpha=1)
+fit.fesat.glm.cv$lambda.min
+
+# parameters to go in table
+fesat.glmnet.coefs = coef(fit.fesat.glm.cv, s = "lambda.min")
+class(fesat.glmnet.coefs)
+
+```
+
+
+
+```{r}
+
+# To use multiple imputation we can use the miselect package in R: https://cran.r-project.org/web/packages/miselect/
+# The paper has just been published: https://doi.org/10.1080/10618600.2022.2035739
+# this incorporation of missing data into lasso estimates, is not well established.
+
+# code below copies vignette here: https://cran.r-project.org/web/packages/miselect/vignettes/miselect.html
+
+# mi data from above for the bw selection model: mi.dat.fe 
+set.seed(185856)
+mids = mi.dat.fesat
+
+colMeans(is.na(s2.dat.fesat))
+# overall the missing per variable not too bad (<5%) except for polyps
+prop.table(table(complete.cases(s2.dat.fesat)))
+# if you combine all missing you go up to 17% that are not complete cases and have at least one missing
+
+# Generate list of completed data.frames
+dfs <- lapply(1:impute.set, function(i) complete(mids, action = i))
+
+head(dfs[[1]]) # check
+
+# Generate list of imputed design matrices and imputed responses
+x <- list()
+y <- list()
+for (i in 1:impute.set) {
+    x[[i]] <- as.matrix(dfs[[i]][, c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)])
+    y[[i]] <- dfs[[i]][,"Serum.fesat"]
+}
+
+# Calculate observational weights
+weights  <- 1 - rowMeans(is.na(s2.dat.fesat))
+pf       <- rep(1, length(c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)))
+adWeight <- rep(1, length(c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs)))
+alpha    <- c(.5 , 1)
+
+
+# Since 'Y' is a continuous variable, we use 'family = "gaussian"'
+fit <- cv.saenet(x, y, pf, adWeight, weights, family = "gaussian",
+                 alpha = alpha, nfolds = 5)
+
+# By default 'coef' returns the betas for (lambda.min , alpha.min)
+# parameters to go in table
+fesat.glmnet.coefs.mi = coef(fit)
+fesat.glmnet.coefs.mi
+
+```
+
+<!-- =================== -->
+<!-- Save data for tables -->
+<!-- =================== -->
+
+```{r}
+
+# save output for tables below.
+save(dat.coef.ferritin, dat.coef.iron, dat.coef.fesat,
+     fesat.step.coefs, iron.step.coefs, ferritin.step.coefs,
+     iron.glmnet.coefs, fesat.glmnet.coefs, ferritin.glmnet.coefs, 
+     v.iron.out, v.iron.out2, v.ferritin.out, v.ferritin.out2,
+     v.fesat.out, v.fesat.out2,
+     vboot.ferritin, vboot.fesat, vboot.iron,
+     
+     iron.coefs.mi, # imputed 
+     iron.step.coefs.mi, fe.perf.impute, # iron outcome imputed stepwise coefficients and performance measure
+     iron.glmnet.coefs.mi, # iron imputed lasso estimates
+     fe.perf.nos.impute, # imputed perf, no selection
+     fe.perf.impute, # imputed perf for bw
+     
+     fertn.coefs.mi, # imputed
+     fertn.step.coefs.mi, fertn.perf.impute, # ferritin outcome stepwise imputed coefficients and performance measure
+     fertn.glmnet.coefs.mi, # ferritin imputed lasso estimates
+     fertn.perf.nos.impute, # imputed perf, no selection
+     fertn.perf.impute, # imputed perf for bw
+     
+     fesat.coefs.mi, # imputed
+     fesat.step.coefs.mi, fesat.perf.impute, # ferritin outcome stepwise imputed coefficients and performance measure
+     fesat.glmnet.coefs.mi, # ferritin imputed lasso estimates
+     fesat.perf.nos.impute, # imputed perf, no selection
+     fesat.perf.impute, # imputed perf for bw
+
+     
+     file="t2-tabledat-all.RData")
+
+```
+
+
+<!-- ======================================================== -->
+<!-- Make tables -->
+<!-- ======================================================== -->
+
+```{r, eval=T}
+# load data from above
+# load("W:/projects/iron-aim4/sections/t2-tabledat-pre.RData") # debug
+load("t2-tabledat-all.RData")
+
+# Combine all regression param estimates across outcomes
+dat.coef.ferritin$outcome="ln(Ferritin)"; dat.coef.ferritin$varname = rownames(dat.coef.ferritin)
+dat.coef.iron$outcome="Iron"; dat.coef.iron$varname = rownames(dat.coef.iron); dat.coef.iron
+dat.coef.fesat$outcome = "Transferrin saturation"; dat.coef.fesat$varname = rownames(dat.coef.fesat)
+head(dat.coef.fesat)
+
+dat.coef. = rbind.data.frame(dat.coef.ferritin, dat.coef.iron, dat.coef.fesat)
+dat.coef.
+
+# add age to labels.df
+ldf = labels.df
+
+ldf$labels = gsub("at entry", "", as.character(ldf$labels)) # remove 'at entry' from labels
+
+labels.df = rbind.data.frame(ldf, 
+                             data.frame(labels = "Age (years)", varname="baseline.age", category = "Age"),
+                             data.frame(labels = "Postmenopause status (y/n)", varname="menop.status2", category = "Menopause and HRT"))
+labels.df
+
+# rename age variable
+dat.coef. = within(dat.coef., {
+  varname = ifelse(varname == "baseline.age[1]", "baseline.age", varname)
+})
+
+# Merge categories and labels with variables
+dat.coef. = merge(dat.coef., labels.df, by="varname")
+head(dat.coef.)
+
+# COMBINE all stepwise params
+# ===========================
+
+fesat.step.coefs$outcome = "Transferrin saturation"; fesat.step.coefs$varname = rownames(fesat.step.coefs)
+colnames(fesat.step.coefs)[1] = "step.coef"
+head(fesat.step.coefs)
+
+iron.step.coefs$outcome = "Iron"; iron.step.coefs$varname = rownames(iron.step.coefs)
+colnames(iron.step.coefs)[1] = "step.coef"
+head(iron.step.coefs)
+
+ferritin.step.coefs$outcome = "ln(Ferritin)"; ferritin.step.coefs$varname = rownames(ferritin.step.coefs)
+colnames(ferritin.step.coefs)[1] = "step.coef"
+head(ferritin.step.coefs)
+dat.step = rbind.data.frame(fesat.step.coefs,
+                            iron.step.coefs,
+                            ferritin.step.coefs)
+
+head(dat.step)
+
+# Combine all the glmnet params
+# ===============================
+
+dat.fe.glmnet = as.data.frame(as.matrix(iron.glmnet.coefs));  dat.fe.glmnet$outcome = "Iron"; dat.fe.glmnet$varname = rownames(dat.fe.glmnet)
+head(dat.fe.glmnet)
+
+dat.fertn.glmnet = as.data.frame(as.matrix(ferritin.glmnet.coefs)); dat.fertn.glmnet$outcome = "ln(Ferritin)"; dat.fertn.glmnet$varname = rownames(dat.fertn.glmnet)
+
+dat.fesat.glmnet = as.data.frame(as.matrix(fesat.glmnet.coefs)); dat.fesat.glmnet$outcome = "Transferrin saturation"; dat.fesat.glmnet$varname = rownames(dat.fesat.glmnet)
+head(dat.fesat.glmnet)
+
+dat.glmnet = rbind.data.frame(dat.fe.glmnet,
+                              dat.fertn.glmnet,
+                              dat.fesat.glmnet)
+colnames(dat.glmnet)[1] = "estimate.glmnet"
+head(dat.glmnet)
+dat.glmnet$varname
+```
+
+```{r, eval=T}
+
+# Combine information from imputation 
+
+# original =================================
+iron.coefs.mi$outcome = "Serum iron"; names(iron.coefs.mi)[1] = "varname"
+fesat.coefs.mi$outcome = "Transferrin saturation"; names(fesat.coefs.mi)[1] = "varname"
+fertn.coefs.mi$outcome = "Ferritin"; names(fertn.coefs.mi)[1] = "varname"
+
+dat.coef.mi. = rbind.data.frame(iron.coefs.mi,
+                                fesat.coefs.mi,
+                                fertn.coefs.mi)
+head(dat.coef.mi.)
+
+
+# STEP =====================================
+
+# Step, iron
+iron.step.coefs.mi$outcome = "Serum iron"
+head(iron.step.coefs.mi)
+colnames(iron.step.coefs.mi)[c(1,2)] = c("varname", "step.coef")
+head(iron.step.coefs.mi)
+
+# Step, ferritin
+fertn.step.coefs.mi$outcome = "Ferritin"
+head(fertn.step.coefs.mi)
+colnames(fertn.step.coefs.mi)[c(1,2)] = c("varname", "step.coef")
+head(fertn.step.coefs.mi)
+
+# Step, fesat
+fesat.step.coefs.mi$outcome = "Transferrin saturation"
+head(fesat.step.coefs.mi)
+colnames(fesat.step.coefs.mi)[c(1,2)] = c("varname", "step.coef")
+head(fesat.step.coefs.mi)
+
+
+dat.step.mi = rbind.data.frame(fesat.step.coefs.mi,
+                            iron.step.coefs.mi,
+                            fertn.step.coefs.mi)
+
+head(dat.step.mi)
+
+# Lasso ===================================
+
+# lasso, iron
+iron.glmnet.coefs.mi = data.frame(iron.glmnet.coefs.mi)
+iron.glmnet.coefs.mi$outcome = "Serum iron"
+iron.glmnet.coefs.mi$varname = rownames(iron.glmnet.coefs.mi)
+head(iron.glmnet.coefs.mi)
+colnames(iron.glmnet.coefs.mi)[c(1)] = c("glmnet.coef")
+rownames(iron.glmnet.coefs.mi) = NULL
+head(iron.glmnet.coefs.mi)
+
+# lasso, ferritin
+fertn.glmnet.coefs.mi = data.frame(fertn.glmnet.coefs.mi)
+fertn.glmnet.coefs.mi$outcome = "Ferritin"
+fertn.glmnet.coefs.mi$varname = rownames(fertn.glmnet.coefs.mi)
+head(fertn.glmnet.coefs.mi)
+colnames(fertn.glmnet.coefs.mi)[c(1)] = c("glmnet.coef")
+rownames(fertn.glmnet.coefs.mi) = NULL
+head(fertn.glmnet.coefs.mi)
+
+# lasso, fesat
+fesat.glmnet.coefs.mi = data.frame(fesat.glmnet.coefs.mi)
+fesat.glmnet.coefs.mi$outcome = "Transferrin saturation"
+fesat.glmnet.coefs.mi$varname = rownames(fesat.glmnet.coefs.mi)
+head(fesat.glmnet.coefs.mi)
+colnames(fesat.glmnet.coefs.mi)[c(1)] = c("glmnet.coef")
+rownames(fesat.glmnet.coefs.mi) = NULL
+head(fesat.glmnet.coefs.mi)
+
+dat.glmnet.mi = rbind.data.frame(iron.glmnet.coefs.mi,
+                              fertn.glmnet.coefs.mi,
+                              fesat.glmnet.coefs.mi)
+head(dat.glmnet.mi)
+
+```
+
+
+```{r, eval=T}
+
+health.vars = c('pcos.rev', 
+                'preeclampsia',
+                'ibd.rev',
+                'polyps.rev',
+                'MC116.f')
+
+bin.vars = c('HZ_RX_Chol_Statin_Current',
+             'HZ_RX_NSAID_Aspirin_Current_Reg',
+             'blood.don.12mos',
+             'rs1799945.g',
+             'rs1800562.a',
+             'rs855791.g')
+
+
+repro.health.vars = c("HR_DiffLMPintv",
+                 "HR_HRT_Years",
+                 'totpreg.mo2',
+                 'rls', 
+                 'menop.status2')
+
+
+lifestyle.vars = c("AL_DrinksPWC_4",
+                 "PH2_TotHrsPerWeek_4",
+                 "FG_all_pf_meat_8",
+                 'bmi')
+
+supp.vars = c("na_all_sd_fe",
+              "na_all_sd_ca_100")
+
+head(dat.coef.)
+
+# Take categories from section2-post.Rmd and add here.
+# =======================================================
+#unique(dat.coef.$varname)
+dat.coef. = within(dat.coef., {
+  cat2 = ifelse(varname %in% bin.vars, "Binary predictors",
+                ifelse(varname %in% health.vars, "Health conditions (ever)",
+                       ifelse(varname %in% repro.health.vars, "Reproductive health", 
+                              ifelse(varname %in% lifestyle.vars, "Lifestyle", 
+                                     ifelse(varname %in% supp.vars, "Supplement and Diet", 
+                                            ifelse(grepl("baseline.age", varname), "Age", varname ))))))
+})
+
+unique(dat.coef.$varname)
+tail(dat.coef.,10)
+head(dat.coef.,10)
+
+sapply(dat.glmnet, class)
+
+dat.coef.merge1 = merge(dat.coef., dat.glmnet, by=c("varname", "outcome"), all.x=T)
+head(dat.coef.merge1)                
+
+
+dat.coef.merge2 = merge(dat.coef.merge1, dat.step, by=c("varname", "outcome"), all.x=T)
+dat.coef.merge2[dat.coef.merge2$outcome=="Transferrin saturation",]
+
+# sapply(dat.coef.merge2, class)
+
+# repeat for imputed data
+
+dat.coef.mi. = within(dat.coef.mi., {
+  cat2 = ifelse(varname %in% bin.vars, "Binary predictors",
+                ifelse(varname %in% health.vars, "Health conditions (ever)",
+                       ifelse(varname %in% repro.health.vars, "Reproductive health", 
+                              ifelse(varname %in% lifestyle.vars, "Lifestyle", 
+                                     ifelse(varname %in% supp.vars, "Supplement and Diet", 
+                                            ifelse(grepl("baseline.age", varname), "Age", varname ))))))
+})
+
+# Merge categories and labels with variables
+newdat = data.frame(varname=c("Apparent R2", "Harrell corrected R2", "Calibration slope"), 
+                    labels=c("Apparent $R^2$", "Harrell corrected $R^2$", "Calibration slope"), 
+                    category=c("Performance", "Performance", "Performance")
+                    )
+labels.df2 = bind_rows(labels.df, newdat)
+
+dat.coef.mi.merge1 = merge(dat.coef.mi., dat.glmnet.mi, by=c("varname", "outcome"), all.x=T)
+head(dat.coef.mi.merge1)                
+
+
+dat.coef.mi.merge2 = merge(dat.coef.mi.merge1, dat.step.mi, by=c("varname", "outcome"), all.x=T)
+dat.coef.mi.merge2[dat.coef.merge2$outcome=="Transferrin saturation",]
+
+
+# Get performance measures for imputed data and add
+# ==========================================
+table(dat.coef.mi.merge2$outcome)
+
+fe.perf.nos.impute$outcome = "Serum iron"; fe.perf.nos.impute$orig = 1
+fe.perf.impute$outcome = "Serum iron"; fe.perf.impute$orig = 0
+fertn.perf.nos.impute$outcome = "Ferritin"; fertn.perf.nos.impute$orig=1
+fertn.perf.impute$outcome = "Ferritin"; fertn.perf.impute$orig=0
+fesat.perf.nos.impute$outcome = "Transferrin saturation"; fesat.perf.nos.impute$orig=1
+fesat.perf.impute$outcome = "Transferrin saturation"; fesat.perf.impute$orig=0
+
+# Combine perf stats by original model and bw (imputed)
+perf.bind = rbind.data.frame(fe.perf.nos.impute,
+                               fe.perf.impute,
+                               fertn.perf.nos.impute,
+                               fertn.perf.impute,
+                               fesat.perf.nos.impute,
+                               fesat.perf.impute)
+perf.bind
+
+# Convert from long to wide with mean.orig and mean.corrected as rows and orig on column for stat="R-square"
+perf.bind.r2 = perf.bind[perf.bind$stat %in% c("R-square", "Slope"),]
+perf.bind.r2
+
+# convert from wide to long using tidyr
+# source: http://www.cookbook-r.com/Manipulating_data/Converting_data_between_wide_and_long_format/#from-wide-to-long
+# source: https://rstudio-pubs-static.s3.amazonaws.com/282405_e280f5f0073544d7be417cde893d78d0.html
+perf.bind.r2.wide = select(perf.bind.r2,-c(mean.opt)) %>%
+  gather(type.r2, value, mean.orig, mean.corrected)
+perf.bind.r2.wide
+perf.bind.r2.wide = perf.bind.r2.wide[!(perf.bind.r2.wide$stat=="Slope" & perf.bind.r2.wide$type.r2=="mean.orig"),]
+perf.bind.r2.wide
+
+perf.r2 = spread(perf.bind.r2.wide, orig, value)
+perf.r2
+perf.r2$type.r2.rev = with(perf.r2, paste0(stat, ".", type.r2))
+perf.r2 = perf.r2[, names(perf.r2)[!(names(perf.r2) %in% c("type.r2", "stat"))],] # take out type.r2 and stat column
+perf.r2 = perf.r2[,c("outcome", "type.r2.rev", "0")]#, "1")]
+perf.r2
+
+names(perf.r2) = c("outcome", "varname", "estimate")#, "step.coef")
+perf.r2$cat2 = "Performance"
+perf.r2
+
+levels(factor(perf.r2$varname))
+perf.r2$varname = factor(perf.r2$varname, 
+                         levels = c("R-square.mean.orig", "R-square.mean.corrected", "Slope.mean.corrected"),
+                         labels=c("Apparent R2", "Harrell corrected R2", "Calibration slope"))
+table(perf.r2$varname)
+perf.r2 = perf.r2[order(perf.r2$varname),]
+
+# Add performance statistic to imputed table
+# ===========================
+head(dat.coef.mi.merge2)
+
+# create estimate + 95% ci
+dat.coef.mi.merge2$est.ci = with(dat.coef.mi.merge2, paste0(format(round(estimate, 3), nsmall=3),
+                                                    " (",
+                                                    format(round(estimate - 1.96*std.error, 3), nsmall=3),
+                                                    ", ",
+                                                    format(round(estimate + 1.96*std.error, 3), nsmall=3),
+                                                    ")"))
+
+head(perf.r2)
+
+# change estimate to character so I can bind with full model
+perf.r2$est.ci = paste(format(round(perf.r2$estimate, 3), nsmall=3))
+perf.r2
+
+dat.coef.mi.merge3 = bind_rows(dat.coef.mi.merge2, perf.r2[c("outcome", "varname", "est.ci", 
+                                                             #"step.coef", 
+                                                             "cat2")])
+tail(dat.coef.mi.merge3)
+
+# Prep values for table
+# ===========================
+
+# add labels
+tail(labels.df2)
+levels(dat.coef.mi.merge3$varname)
+dat.coef.mi.merge3$varname = as.character(dat.coef.mi.merge3$varname)
+dat.coef.mi.merge3 = merge(dat.coef.mi.merge3, labels.df2[c("labels", "varname")], by="varname")
+table(dat.coef.mi.merge3$labels)
+tail(dat.coef.mi.merge3)
+
+
+# order names of categories
+dat.coef.mi.merge3$cat2 = factor(dat.coef.mi.merge3$cat2,
+                              levels = c(names(table(dat.coef.mi.merge2$cat2)), "Performance"))
+levels(dat.coef.mi.merge3$cat2)
+table(dat.coef.mi.merge3$cat2)
+
+dat.coef.mi.merge3 = dat.coef.mi.merge3[order(dat.coef.mi.merge3$cat2, dat.coef.mi.merge3$labels, dat.coef.mi.merge3$outcome),]
+head(dat.coef.mi.merge3)
+tail(dat.coef.mi.merge3)
+sapply(dat.coef.mi.merge3, class)
+
+# convert  0 to NA in table
+dat.coef.mi.merge3$glmnet.coef[dat.coef.mi.merge3$glmnet.coef==0] <- NA
+
+# round numeric columns
+class.cols = sapply(dat.coef.mi.merge3, class); class.cols
+num.vars = names(dat.coef.mi.merge3)[class.cols=="numeric"]
+dat.coef.mi.merge3[num.vars] = round(dat.coef.mi.merge3[num.vars], 3)
+
+head(dat.coef.mi.merge3[dat.coef.mi.merge3$outcome=="Serum iron",])
+tail(dat.coef.mi.merge3[dat.coef.mi.merge3$outcome=="Serum iron",])
+
+```
+
+
+
+```{r, eval=T}
+
+# Serum iron
+# include ML, step and lasso 
+# =====================
+
+head(dat.coef.merge2) 
+names(dat.coef.merge2)
+sapply(dat.coef.merge2, class)
+
+
+# prep data for table
+vars.select = which(names(dat.coef.merge2) %in% c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")); vars.select
+
+dat.coef.merge.iron = dat.coef.merge2[dat.coef.merge2$outcome == "Iron", vars.select]
+sapply(dat.coef.merge.iron, class)
+
+
+# ADD the $R^2$ model performance statistics at bottom of table with coefficients and optimism adjusted $R^2$
+# ==========================
+
+newdat.iron = rbind(data.frame( cat2="Performance", labels="Apparent $R^2$", 
+                             est.ci = format(round(v.iron.out[1,1],3), nsmall=3), 
+                             step.coef = v.iron.out2[1,1],
+                             estimate.glmnet = vboot.iron$params[1,1]),
+                    data.frame( cat2="Performance", labels="Harrell corrected $R^2$", 
+                             est.ci = format(round(v.iron.out[1,3],3), nsmall=3), 
+                             step.coef = v.iron.out2[1,3],
+                             estimate.glmnet = vboot.iron$params[1,3]),
+                    data.frame( cat2="Performance", labels="Calibration slope", 
+                             est.ci = format(round(v.iron.out[3,3],3), nsmall=3), 
+                             step.coef = NA,
+                             estimate.glmnet = NA))                   
+newdat.iron$outcome="Iron"
+names(newdat.iron)
+
+dat.coef.merge.iron2 = rbind(dat.coef.merge.iron,
+                        newdat.iron)
+dat.coef.merge.iron2
+
+# order names of categories
+dat.coef.merge.iron2$cat2 = factor(dat.coef.merge.iron2$cat2,
+                              levels = c(names(table(dat.coef.merge.iron$cat2)), "Performance"))
+table(dat.coef.merge.iron2$cat2)
+dat.coef.merge.iron2 = dat.coef.merge.iron2[order(dat.coef.merge.iron2$cat2, dat.coef.merge.iron2$labels, dat.coef.merge.iron2$outcome),]
+head(dat.coef.merge.iron2)
+sapply(dat.coef.merge.iron2, class)
+
+# convert  0 to NA in table
+dat.coef.merge.iron2$estimate.glmnet[dat.coef.merge.iron2$estimate.glmnet==0] <- NA
+
+# round numeric columns
+class.cols = sapply(dat.coef.merge.iron2, class); class.cols
+num.vars = names(dat.coef.merge.iron2)[class.cols=="numeric"]
+dat.coef.merge.iron2[num.vars] = round(dat.coef.merge.iron2[num.vars], 3)
+```
+
+
+```{r, results="markup", eval=T}
+
+# Serum iron outcome
+# ======================
+
+# Table 
+kable(dat.coef.merge.iron2[, -1],
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "ML estimate (95\\% CI)", "Stepwise estimate", "Lasso Estimate"),
+      escape=F,
+      longtable=T,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates for the serum iron outcome, complete case") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=9) 
+
+```
+
+\clearpage
+\newpage
+
+```{r, eval=T}
+
+# Include ML, step and lasso 
+# ==============================
+
+# Transferrin saturation
+# ======================
+
+# Prep data for table
+table(dat.coef.merge2$outcome)
+dat.coef.merge2[dat.coef.merge2$outcome=="Transferrin saturation",]
+
+dat.coef.merge.fesat = dat.coef.merge2[dat.coef.merge2$outcome=="Transferrin saturation",
+                                       c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")]
+head(dat.coef.merge.fesat)
+
+# ADD the $R^2$ model performance statistics at bottom of table with coefficients and optimism adjusted $R^2$
+# ==========================
+
+newdat.fesat = rbind(data.frame( cat2="Performance", labels="Apparent $R^2$", 
+                             est.ci = format(round(v.fesat.out[1,1],3), nsmall=3), 
+                             step.coef = v.fesat.out2[1,1],
+                             estimate.glmnet = vboot.fesat$params[1,1]),
+                     data.frame( cat2="Performance", labels="Harrell corrected $R^2$", 
+                             est.ci = format(round(v.fesat.out[1,3],3), nsmall=3), 
+                             step.coef = v.fesat.out2[1,3],
+                             estimate.glmnet = vboot.fesat$params[1,3]),
+                    data.frame( cat2="Performance", labels="Calibration slope", 
+                             est.ci = format(round(v.iron.out[3,3],3), nsmall=3), 
+                             step.coef = NA,
+                             estimate.glmnet = NA))
+                     
+newdat.fesat$outcome="Transferrin Saturation"
+
+dat.coef.merge.fesat2 = rbind(dat.coef.merge.fesat,
+                              newdat.fesat)
+dat.coef.merge.fesat2
+
+# order names of categories
+dat.coef.merge.fesat2$cat2 = factor(dat.coef.merge.fesat2$cat2,
+                                    levels = c(names(table(dat.coef.merge.fesat$cat2)), "Performance"))
+table(dat.coef.merge.fesat2$cat2)
+dat.coef.merge.fesat2 = dat.coef.merge.fesat2[order(dat.coef.merge.fesat2$cat2, dat.coef.merge.fesat2$labels, dat.coef.merge.fesat2$outcome),]
+head(dat.coef.merge.fesat2)
+sapply(dat.coef.merge.fesat2, class)
+
+# convert  0 to NA in table
+dat.coef.merge.fesat2$estimate.glmnet[dat.coef.merge.fesat2$estimate.glmnet==0] <- NA
+
+# round numeric columns
+class.cols = sapply(dat.coef.merge.fesat2, class); class.cols
+num.vars = names(dat.coef.merge.fesat2)[class.cols=="numeric"]
+dat.coef.merge.fesat2[num.vars] = round(dat.coef.merge.fesat2[num.vars], 3)
+
+```
+
+
+
+```{r, results="markup", eval=T}
+# Table
+kable(dat.coef.merge.fesat2[, -1],
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "ML estimate (95\\% CI)", "Stepwise estimate", "Lasso Estimate"),
+      escape=F,
+      longtable=T,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates for the transferrin saturation outcome, complete case") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=9) 
+
+```
+
+\clearpage
+\newpage
+
+
+
+
+```{r, eval=T}
+
+# Include ML, step and lasso 
+# ==============================
+
+# Ferritin
+# =====================
+# Prep data for table
+table(dat.coef.merge2$outcome)
+dat.coef.merge2[dat.coef.merge2$outcome=="ln(Ferritin)",]
+
+dat.coef.merge.fertn = dat.coef.merge2[dat.coef.merge2$outcome=="ln(Ferritin)",
+                                       c("outcome", "cat2", "labels", "est.ci", "step.coef", "estimate.glmnet")]
+head(dat.coef.merge.fertn)
+
+# ADD the $R^2$ model performance statistics at bottom of table with coefficients and optimism adjusted $R^2$
+# ==========================
+
+newdat.fertn = rbind(data.frame( cat2="Performance", labels="Apparent $R^2$", 
+                             est.ci = format(round(v.ferritin.out[1,1],3), nsmall=3), 
+                             step.coef = v.ferritin.out2[1,1],
+                             estimate.glmnet = vboot.ferritin$params[1,1]),
+                     data.frame( cat2="Performance", labels="Harrell corrected $R^2$", 
+                             est.ci = format(round(v.ferritin.out[1,3],3), nsmall=3), 
+                             step.coef = v.ferritin.out2[1,3],
+                             estimate.glmnet = vboot.ferritin$params[1,3]),
+                    data.frame( cat2="Performance", labels="Calibration slope", 
+                             est.ci = format(round(v.iron.out[3,3],3), nsmall=3), 
+                             step.coef = NA,
+                             estimate.glmnet = NA))
+
+newdat.fertn$outcome="ln(Ferritin)"
+
+dat.coef.merge.fertn2 = rbind(dat.coef.merge.fertn,
+                              newdat.fertn)
+dat.coef.merge.fertn2
+
+# order names of categories
+dat.coef.merge.fertn2$cat2 = factor(dat.coef.merge.fertn2$cat2,
+                                    levels = c(names(table(dat.coef.merge.fertn$cat2)), "Performance"))
+table(dat.coef.merge.fertn2$cat2)
+dat.coef.merge.fertn2 = dat.coef.merge.fertn2[order(dat.coef.merge.fertn2$cat2, dat.coef.merge.fertn2$labels, dat.coef.merge.fertn2$outcome),]
+head(dat.coef.merge.fertn2)
+sapply(dat.coef.merge.fertn2, class)
+
+# convert  0 to NA in table
+dat.coef.merge.fertn2$estimate.glmnet[dat.coef.merge.fertn2$estimate.glmnet==0] <- NA
+
+# round numeric columns
+class.cols = sapply(dat.coef.merge.fertn2, class); class.cols
+num.vars = names(dat.coef.merge.fertn2)[class.cols=="numeric"]
+dat.coef.merge.fertn2[num.vars] = round(dat.coef.merge.fertn2[num.vars], 3)
+```
+
+```{r, results="markup", eval=T}
+
+# Table
+kable(dat.coef.merge.fertn2[, -1],
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "ML estimate (95\\% CI)", "Stepwise estimate", "Lasso Estimate"),
+      escape=F,
+      longtable=T,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates for the serum ferritin outcome, complete case") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=9)
+
+```
+
+
+## Model performance statistics based on internal validation
+
+```{r, eval=T}
+
+# Print off the model performance statistics based on internal validation
+
+v.out = rbind.data.frame(v.iron.out,
+                         v.ferritin.out,
+                         v.fesat.out)
+v.out
+
+# Take out the intercept from the calibration model
+v.out = v.out[!(rownames(v.out) %in% c("Intercept", "Intercept1", "Intercept2")),]
+v.out
+
+v.out$outcome = c(rep("Iron", 2), rep("Ferritin", 2), rep("FeSAT", 2))
+v.out$measure = c(rep(c("R2",
+                        #"Calibration in the large",
+                        "Calibration slope"),3))
+
+v.out
+
+v.out[,1:3] = round(v.out[,1:3],2)
+v.out
+
+save(v.out, file="s2-rms-all.RData")
+
+```
+
+```{r, results="markup", eval=T}
+
+kable(v.out[,c(5,1:3)], 
+      booktabs=T,
+      col.names=c("Measure", "Observed performance", "Average optimism", "Optimism Corrected"),
+      row.names = F,
+      caption = "Model performance statistics based on internal validation by serum iron outcome, complete case") %>%
+  kable_styling(latex_options = c("striped", "HOLD_position")) %>%
+  pack_rows("Iron (mg/dL)", 1, 2) %>%
+  pack_rows("Ferritin (mg/dL)", 3, 4) %>%
+  pack_rows("Transferrin saturation (%)", 5, 6)
+
+```
+
+
+
+## Imputed results
+
+Number of bootstrap estimates: `r boot.set`
+
+Number of imputations: `r impute.set`
+
+```{r, results="markup", eval=T}
+
+# Serum iron outcome
+# ======================
+
+#dat.coef.mi.merge3[dat.coef.mi.merge3$outcome=="Serum iron", c("cat2", "labels", "est.ci", "step.coef", "glmnet.coef")]
+
+# Table 
+kable(dat.coef.mi.merge3[dat.coef.mi.merge3$outcome=="Serum iron", c("cat2", "labels", "est.ci", "step.coef", "glmnet.coef")],
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "ML estimate (95\\% CI)", "Stepwise estimate", "Lasso Estimate"),
+      escape=F,
+      longtable=T,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates for the serum iron outcome, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=9) 
+
+```
+
+
+
+```{r, results="markup", eval=T}
+
+# Ferritin outcome
+# ======================
+
+# Table 
+kable(dat.coef.mi.merge3[dat.coef.mi.merge3$outcome=="Ferritin", c("cat2", "labels", "est.ci", "step.coef", "glmnet.coef")],
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "ML estimate (95\\% CI)", "Stepwise estimate", "Lasso Estimate"),
+      escape=F,
+      longtable=T,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates for the ferritin outcome, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=9) 
+
+```
+
+```{r, results="markup", eval=T}
+
+# Ferritin outcome
+# ======================
+
+# Table 
+kable(dat.coef.mi.merge3[dat.coef.mi.merge3$outcome=="Transferrin saturation", c("cat2", "labels", "est.ci", "step.coef", "glmnet.coef")],
+      booktabs=T, 
+      col.names = c("Category", "Variable label", "ML estimate (95\\% CI)", "Stepwise estimate", "Lasso Estimate"),
+      escape=F,
+      longtable=T,
+      row.names=F,
+      caption="Multivariable regression model parameter estimates for the transferrin saturation outcome, multiple imputation") %>% #https://stackoverflow.com/questions/46085067/r-markdown-table-caption-width-with-kable-and-longtable
+  #landscape() %>%
+  column_spec(1, width = "10em") %>%
+  column_spec(2, width = "15em") %>%
+  collapse_rows(columns =1) %>%
+  kable_styling(font_size=9) 
+
+```
+
+
+\clearpage
+\newpage
+
+```{r, eval=T}
+# save data for the tables above
+save(dat.coef.merge.iron2, 
+     dat.coef.merge.fesat2,
+     dat.coef.merge.fertn2,
+     dat.coef.mi.merge3, 
+     boot.set, impute.set,
+     file="s2-model-perf-tables-all.RData")
+
+```
+
+
+
+

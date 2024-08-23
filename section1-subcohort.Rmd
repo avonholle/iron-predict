@@ -1,0 +1,486 @@
+---
+title: "Section 1: Descriptive statistics"
+output:
+  pdf_document:
+    toc: no
+  html_document:
+    theme: united
+    toc: no
+editor_options:
+  chunk_output_type: console
+header-includes:
+ \usepackage{float}
+---
+
+
+```{r, include=FALSE}
+knitr::opts_chunk$set(echo = F, 
+                      results = 'hide',
+                      warning = F,
+                      fig.pos = 'H')
+
+#runif(1, 0, 10^8)
+set.seed(74268794)
+
+```
+
+
+```{r, include=F}
+# bring in packages
+require(knitr)
+require(haven)
+require(data.table)
+require(tableone)
+require(ggplot2)
+require(kableExtra)
+require(rowr)
+require(stargazer)
+library("PerformanceAnalytics")
+require(ggpubr)
+require(labelled)
+require(survival)
+```
+
+
+
+```{r}
+
+# source: section2-dataprep.Rmd
+
+load(file="../sections/s2.RData") # s2.dat, cov.vars.new, labels.df from section2-dataprep.Rmd
+
+names(s2.dat)
+dim(s2.dat)
+cov.vars.new
+
+# s2.dat = within(s2.dat, {
+#   na_all_dt_fe_1000 = na_all_dt_fe/1000
+#   na_all_sd_fe_1000 = na_all_sd_fe/1000
+#   na_sup_fe_1000 = na_sup_fe/1000
+# })
+
+
+```
+
+```{r}
+
+# Source: data-handling-cch.Rmd
+
+load(file="../sections/updated-data-iron.RData") # sub.dat is subset, all.dat is total data
+
+# nail.names2
+# iron.names2
+all.dat = sub.dat
+dim(sub.dat)
+sub.dat = sub.dat[sub.dat$PSID %in% s2.dat$PSID,] # restrict to subcohort
+dim(sub.dat)
+table(sub.dat$menop.status.f, useNA="always") 
+
+table(all.dat$menop.status.f)
+
+```
+
+# Descriptive statistics
+
+## Summary of covariates by sample type (total or iron subset)
+
+
+```{r}
+# original variable names from df1 and df3
+
+serum.vars = c("UMN_Iron_Baseline_FE", "UMN_Iron_Baseline_FERTN", "UMN_Iron_Baseline_UIBC",
+               "UMN_Iron_Baseline_TIBC", "UMN_Iron_Baseline_FESAT",
+               "UMN_Iron_SCL_FE", "UMN_Iron_SCL_FERTN", "UMN_Iron_SCL_UIBC", "UMN_Iron_SCL_TIBC", "UMN_Iron_SCL_FESAT"  )
+
+nail.vars = c('DC_Baseline_Toenail_Fe', "DC_SCL_Toenail_Fe")
+
+cont.vars = c("baseline.age", 
+              "bmi", "waist", "height",
+              'age.menarche')
+
+cont.vars2 = c(serum.vars, 
+#               nail.vars,
+               "baseline.age", 
+               "bmi",
+               'age.menarche',
+               'time.since.menop2',
+               'serum.age.diff',
+               't.preg',
+                "totpreg.mo2",
+                "na_all_sd_fe",
+                "na_all_sd_ca")
+#                'na_sup_fe_1000',
+#                'na_all_dt_fe_1000')
+#               'nail.age.diff')
+
+
+# new variables, Fall 2021: pcos.rev, preeclampsia, ibd.rev,  polyps.rev, totpreg.mo2
+
+cat.vars = c('menop.status.f',
+             'smoke.f2',
+             'alc.f4',
+             'educ.f2', # no doctoral degrees in iron subset (only 4 percent in total sample)
+             'age.firstbirth.cat.table',
+             'race.eth',
+             'bmi.cat',
+             'HZ_RX_Chol_Statin_Current',
+             'HZ_RX_NSAID_Aspirin_Current_Reg',
+             'rs1799945',
+             'rs1800562',
+             'rs855791',
+             'pcos.rev', 
+             'preeclampsia',
+             'ibd.rev',
+             'polyps.rev',
+             'blood.don.12mos')
+
+
+all.dat = within(all.dat, {
+  time.since.menop2 = ifelse(menop.status==1, time.since.menop, NA)
+  na_all_dt_fe_1000 = na_all_dt_fe/1000
+  na_all_sd_fe_1000 = na_all_sd_fe/1000
+  na_sup_fe_1000 = na_sup_fe/1000
+
+})
+
+summary(sub.dat$time.since.menop2)
+class(all.dat$gravidity)
+class(all.dat$term.preg)
+summary(sub.dat$totpreg.mo)
+summary(sub.dat$na_all_sd_fe)
+summary(sub.dat$na_all_sd_ca)
+
+```
+
+```{r, include=F, eval=F}
+
+# Get cell counts
+dt=data.table(all.dat)
+
+# FE ====================
+# counts of non-missing combinations of fe values at baseline
+dcast(dt, !(is.na(UMN_Iron_Baseline_FE)) ~ !(is.na(DC_Baseline_Toenail_Fe)),
+      value.var='PSID', length)
+
+# counts of non-missing combinations of fe values at second measure
+dcast(dt, !(is.na(UMN_Iron_SCL_FE)) ~ !(is.na(DC_SCL_Toenail_Fe)),
+      value.var='PSID', length)
+
+# Counts of non-missing combinations of fe values at baseline and second measure
+dcast(dt, (!(is.na(UMN_Iron_SCL_FE)) & !(is.na(UMN_Iron_Baseline_FE))) ~ (!(is.na(DC_SCL_Toenail_Fe)) & !(is.na(DC_Baseline_Toenail_Fe))),
+      value.var='PSID', length)
+
+
+# Ferritin ====================
+# counts of non-missing combinations of fe values at baseline
+dcast(dt, !(is.na(UMN_Iron_Baseline_FERTN)) ~ !(is.na(DC_Baseline_Toenail_Fe)),
+      value.var='PSID', length)
+
+# counts of non-missing combinations of fe values at second measure
+dcast(dt, !(is.na(UMN_Iron_SCL_FERTN)) ~ !(is.na(DC_SCL_Toenail_Fe)),
+      value.var='PSID', length)
+
+```
+
+```{r}
+
+# Add non-missing values to variable names
+
+orig.vars = c(cont.vars2, cat.vars); orig.vars
+
+
+orig.vars[!orig.vars %in% names(all.dat)]
+
+sub.vars = all.dat[, c(orig.vars, "subcohort", "PSID")]
+colnames(sub.vars)
+names(sub.vars)
+```
+
+
+```{r}
+# fix labels for education, race and BMI after internal 8/2022 review
+names(sub.vars)
+# educ.f2, race.eth, bmi.cat
+
+levels(sub.vars$educ.f2)
+sub.vars$educ.f2 = factor(sub.vars$educ.f2,
+                          labels = c("less than high school degree",
+                                     "Completed high school or GED",
+                                     "Some college but no degree",
+                                     "Associate or technical degree",
+                                     "Bachelor's degree",
+                                     "Doctoral or Master's degree"))
+levels(sub.vars$race.eth)
+sub.vars$race.eth = factor(sub.vars$race.eth,
+                           labels = c( "Non-Hispanic White",
+                                       "Non-Hispanic Black/African American",
+                                       "Hispanic/Latina",
+                                       "Other" ))
+
+levels(sub.vars$bmi.cat)
+sub.vars$bmi.cat = factor(sub.vars$bmi.cat,
+                          labels = c("< 18.5",
+                                      "18.5-24.9",
+                                      "25.0-29.9",
+                                      "30.0-34.9",
+                                      "35.0-39.9",
+                                      "40.0 +"))
+
+
+```
+
+
+```{r}
+levels(sub.vars$age.firstbirth.cat.table)
+sub.vars$age.firstbirth.cat.table = factor(sub.vars$age.firstbirth.cat.table,
+                                           labels=c("Nulliparous", "<=20", "21-24", "25-29", "30+"))
+levels(sub.vars$age.firstbirth.cat.table)
+
+
+non.miss.ct = colSums(!is.na(sub.vars[1:length(orig.vars)])); non.miss.ct
+
+# index.names.cont = which(colnames(df3) %in% cont.vars2) # make sure colnames are in correct order, cont first, cat next.
+# index.names.cat = which(colnames(df3) %in% cat.vars) # make sure colnames are in correct order, cont first, cat next.
+# 
+# colnames(df3)[index.names]
+# 
+# loc.cat = names(df3) %in% cat.vars; loc.cat
+# loc.cont = names(df3) %in% cont.vars2; loc.cont
+
+
+var.name.update = c(
+                  "Iron, baseline (mcg/dL)",
+                  "Ferritin, baseline (mcg/dL)",
+                  "UIBC, baseline",
+                  "TIBC, baseline",
+                  "Transferrin saturation, baseline (%)",
+                  
+                  "Iron (mcg/dL)",
+                  "Ferritin (mcg/dL)",
+                  "UIBC",
+                  "TIBC",
+                  "Transferrin saturation (%)",
+                  
+#                  "Iron, baseline (mcg/g)",
+#                  "Iron, 2",
+
+                  "Baseline age (years)", 
+                  "BMI (kg/m$^2$)",
+                  "Age at menarche (years)",
+                  "Time since menopause (years)",
+                  "Age difference, serum draws (years)",
+                  "Number of pregnancies, \nexcluding miscarriages and spontaneous abortions",
+                  "Total years pregnant and breastfeeding",
+                  "Iron, diet and supplements, mg",
+                  "Calcium, diet and supplements, mg",
+#                  "Age difference, nail collection (years)",
+
+                  
+                  "Baseline menopause status n (%)",
+                  "Smoking status",
+                  "Alcohol status",
+                  "Education",
+                  "Age at first birth (years)",
+                  "Race/ethnicity",
+                  "BMI categories (kg/m$^2$)",
+                  
+                  "Current statin user",
+                  "Current regular aspirin user",
+                  "rs1799945",
+                  'rs1800562',
+                  'rs855791',
+                  'Ever PCOS, yes/no',
+                  'Ever preeclampsia, yes/no',
+                  'Ever IBD, yes/no', 
+                  'Ever had colon/rectum polyps, yes/no',
+                  "Blood donation in past 12 months, yes/no")
+
+
+length(var.name.update)
+length(orig.vars)
+
+# make new variable names
+new.var.names = paste0(var.name.update, " (n=", non.miss.ct, ")"); new.var.names
+
+
+# section out new cont and cat var names for tables below
+start = length(var.name.update)-length(cat.vars)+1; start
+new.cat.names = new.var.names[start:length(new.var.names)]; new.cat.names
+new.cont.names = new.var.names[1:(start-1)]; new.cont.names
+
+names(sub.vars)[1:length(new.var.names)] = new.var.names
+
+# fix continuous variables that are currently treated as a factor
+nums = sub.vars[new.var.names[!(new.var.names %in% new.cat.names)]]
+sapply(nums, class)
+sub.vars$`BMI (kg/m$^2$) (n=3168)` = as.numeric(as.character(sub.vars$`BMI (kg/m$^2$) (n=3168)`))
+class(sub.vars$`BMI (kg/m$^2$) (n=3168)`)
+
+```
+
+
+
+```{r}
+
+# iron.vars
+# make dummies for iron vars
+
+full = sub.vars
+
+# set iron variables to 0 for full sample
+#full[, table.names[1:12]] <- 0
+
+t1 = CreateTableOne(vars = new.var.names, 
+                        data=full,
+                        factorVars = new.cat.names,
+                        test=FALSE)
+
+t1.mat <- print(t1, nonnormal = new.cont.names,
+                quote = FALSE, noSpaces = TRUE, printToggle = FALSE)#,
+                #catDigits=0, 
+                #contDigits=0)
+
+t1.mat
+nrow(t1.mat)
+
+```
+
+
+```{r}
+
+# summary of missingness
+# Source: https://cran.r-project.org/web/packages/tableone/vignettes/introduction.html
+
+summary(t1)
+
+```
+
+
+```{r}
+
+# get summary for subset of sample (by menopause status)
+
+sub = sub.vars[sub.vars$PSID %in% sub.dat$PSID,]; dim(sub)
+names(sub)
+table(sub$`Baseline menopause status n (%) (n=3169)`)
+table(sub$subcohort)
+table(sub$`Baseline menopause status n (%) (n=3169)`)
+
+head(sub)
+table(sub$`Baseline menopause status n (%) (n=3169)`)
+
+# subcohort==1
+# ===============================================
+names(sub)
+table(sub$`Baseline menopause status n (%) (n=3169)`)
+
+table(sub$`Baseline menopause status n (%) (n=3169)`)
+
+t1.iron.sub1 = CreateTableOne(vars = new.var.names, 
+                        data=sub[which(sub$`Baseline menopause status n (%) (n=3169)`=='1) Yes'),],
+                        factorVars = new.cat.names,
+                        test=FALSE)
+
+t1.mat.iron.sub1 <- print(t1.iron.sub1, 
+                     nonnormal = new.cont.names,
+                     quote = FALSE, noSpaces = TRUE, printToggle = FALSE)#,
+                     #catDigits=0, contDigits=0)
+
+t1.mat.iron.sub1
+summary(t1.iron.sub1)
+nrow(t1.mat.iron.sub1)
+summary(t1.iron.sub1)
+
+# subcohort==0
+# ===============================================
+
+sub0 = sub[which(sub$`Baseline menopause status n (%) (n=3169)`== '0) No'),]
+sub0$`Time since menopause (years) (n=2106)`=0 # create dummy 
+
+t1.iron.sub0 = CreateTableOne(vars = new.var.names, 
+                        data=sub0,
+                        factorVars = new.cat.names,
+                        test=FALSE)
+
+t1.mat.iron.sub0 <- print(t1.iron.sub0,
+                     nonnormal = new.cont.names,
+                     quote = FALSE, noSpaces = TRUE, printToggle = FALSE)#,
+                     #catDigits=0, contDigits=0)
+
+t1.mat.iron.sub0
+nrow(t1.mat.iron.sub0)
+summary(t1.iron.sub0)
+
+```
+
+
+
+```{r}
+
+# Combine total and subset
+
+tot = data.frame(Variable = as.character(rownames(t1.mat)), 
+                 total = as.character(t1.mat[,1]), 
+                 sub0 = as.character(t1.mat.iron.sub0),
+                 sub1 = as.character(t1.mat.iron.sub1))
+
+tot[] <- lapply(tot, as.character)  # convert all to character (see https://stackoverflow.com/questions/2851015/convert-data-frame-columns-from-factors-to-characters)
+
+head(tot)
+class(tot$total)
+
+tot[tot== "0 [0, 0]"] <- "  "
+head(tot)
+
+tot$Variable = gsub( "%", "\\\\%", tot$Variable)
+
+colnames(tot) = c("Variable", "Total", "No", "Yes")
+tot
+
+tot[19,3:4] = ""
+tot
+
+```
+
+\clearpage
+\newpage 
+
+
+
+```{r, results='markup', eval=T}
+## Table
+
+tot.update = tot[-c(7:11, 57:68), c("Variable", "Total", "Yes", "No")]
+# Re-set the rownames. Starting with 1 till last row number
+rownames(tot.update) <- 1:nrow(tot.update)
+tot = tot.update
+
+k1 = kable(tot,
+      col.names = c("Variable", "Total", "Yes", "No"),
+      row.names = F,
+      booktabs=T,
+      escape=F,
+      linesep = "", 
+      caption = "Baseline characteristics of subcohort by menopause status at baseline",
+      longtable=T) %>%
+  column_spec(2:4, width = "6em") %>%
+  column_spec(1, width = "25em") %>%
+  pack_rows("Serum, baseline", 2, 6) %>%
+  pack_rows("Continuous", 7, 16) %>%
+  pack_rows("Categorical", 17, nrow(tot.update)) %>%
+  add_header_above(c(" "=2, "Postmenopause status at baseline\n in subcohort only" = 2)) %>%
+  add_indent(c(18:20,
+               22:24,
+               26:31,
+               33:37,
+               39:42,
+               44:49)) %>% 
+  kable_styling(latex_options = c("HOLD_position"), full_width = F)
+
+k1
+
+save(k1, tot, file="../sections/k1-subcohort.RData")
+
+```
+
+

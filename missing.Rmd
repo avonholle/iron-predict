@@ -264,12 +264,6 @@ bin.covs = c('HZ_RX_Chol_Statin_Current',
 avars = c(supp.covs, lifestyle.covs, repro.covs, health.covs, bin.covs); avars
 extra.vars = c('menop.age', 'age.menarche', 'PG_BreastTotal', 'PG_MedParity') # part of rls variable
 
-# what variables are already in the s2.dat data set?
-avars[avars %in% names(s2.dat)]
-extra.vars[extra.vars %in% names(s2.dat)] # none
-
-# what analysis variables are not in the s2.dat data set?
-avars[!(avars %in% names(s2.dat))]
 
 # subset to postmenopausal
 dat1 = s2.dat[which(s2.dat$menop.status==1), avars]

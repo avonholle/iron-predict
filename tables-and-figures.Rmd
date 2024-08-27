@@ -279,7 +279,7 @@ names(test2)
 
 
 ```{r, eval=T}
-# Clare is interested in re-ordering columns with the stepwise and lasso est first to make comparisons easier for her (ML estimates)
+# request to re-order columns with the stepwise and lasso est first to make comparisons easier (ML estimates)
 
 test.rev.pre = dcm.mi.pre2[,c("outcome", "cat2", "labels", "step.coef", "glmnet.coef", "est.ci")] %>%
   pivot_wider(names_from=outcome, values_from = c("step.coef", "glmnet.coef","est.ci"))
@@ -306,7 +306,7 @@ names(test2.rev.pre)
 
 
 ```{r, results='markup', eval=T}
-# revised tables per Clare's request 5/2022
+# revised tables per request 5/2022
 kable(test2.rev.pre,
       booktabs=T, 
       col.names = c("Category", "Variable label",
@@ -381,7 +381,7 @@ names(test2)
 
 
 ```{r, eval=T}
-# Clare is interested in re-ordering columns with the stepwise and lasso est first to make comparisons easier for her (ML estimates)
+# request to re-order columns with the stepwise and lasso est first to make comparisons easier  (ML estimates)
 
 test.rev = dcm.mi.post[,c("outcome", "cat2", "labels", "step.coef", "glmnet.coef", "est.ci")] %>%
   pivot_wider(names_from=outcome, values_from = c("step.coef", "glmnet.coef","est.ci"))
@@ -408,7 +408,7 @@ names(test2.rev)
 
 
 ```{r, results='markup', eval=T}
-# revised tables per Clare's request 5/2022
+# revised tables per request 5/2022
 kable(test2.rev,
       booktabs=T, 
       col.names = c("Category", "Variable label",
@@ -777,6 +777,7 @@ plot_grid(supp.plot.mod2, NULL,
 \newpage
 
 ```{r, results="markup", eval=T}
+
 # from section2-post.Rmd
 # =======================================================
 sub.dat = rev.dat2.post[rev.dat2.post$cov %in% c(supp.vars,
